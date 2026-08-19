@@ -97,10 +97,29 @@ Item {
   property bool connectionsLoading: false
 
   property string notice: ""
+  property string language: "en"
 
-  readonly property string modeLabel: mode === "global" ? "全局"
-    : mode === "direct" ? "直连"
-    : "规则"
+  I18n {
+    id: i18n
+    language: root.language
+  }
+
+  readonly property string modeLabel: t(mode === "global" ? "modeGlobal"
+    : mode === "direct" ? "modeDirect"
+    : "modeRule")
+
+  function t() {
+    var _dep = language
+    return i18n.t.apply(i18n, arguments)
+  }
+
+  function setLanguage(code) {
+    if (code !== "en" && code !== "zh") return
+    language = code
+    if (!ready || langSetProc.running) return
+    langSetProc.command = ["/usr/bin/bash", runner, "set-lang", code]
+    langSetProc.running = true
+  }
 
   // --- helpers -------------------------------------------------------------
 
@@ -224,7 +243,7 @@ Item {
       data = JSON.parse(raw)
     } catch (e) {
       connected = false
-      lastError = "mihomo 返回了无法解析的数据"
+      lastError = t("parseError")
       return
     }
 
@@ -414,13 +433,13 @@ Item {
       proxies = copy
     }
     enqueue(["put", "/proxies/" + encode(group), JSON.stringify({ name: name })],
-            "切换 " + group + " → " + name)
+            t("switchedTo", group, name))
   }
 
   function setMode(value) {
     if (!ready || ["rule", "global", "direct"].indexOf(value) < 0) return
     mode = value
-    enqueue(["patch", "/configs", JSON.stringify({ mode: value })], "代理模式 → " + modeLabel)
+    enqueue(["patch", "/configs", JSON.stringify({ mode: value })], t("modeTo", modeLabel))
   }
 
   function closeConnection(id) {
@@ -430,12 +449,12 @@ Item {
 
   function closeAllConnections() {
     if (!ready) return
-    enqueue(["delete", "/connections"], "已关闭全部连接")
+    enqueue(["delete", "/connections"], t("closedAll"))
   }
 
   function updateRuleProvider(name) {
     if (!ready) return
-    enqueue(["put", "/providers/rules/" + encode(name)], "更新规则集合 " + name)
+    enqueue(["put", "/providers/rules/" + encode(name)], t("updatingRules", name))
   }
 
   function applyConfigInfo(raw) {
@@ -475,17 +494,17 @@ Item {
   function reloadConfig() {
     if (!ready || configReloading) return
     if (configPath === "") {
-      notice = "还没有定位到配置文件"
+      notice = t("noConfigPath")
       return
     }
     configReloading = true
     enqueue(["put", "/configs?force=true", JSON.stringify({ path: configPath })],
-            "正在重载配置", "reload")
+            t("reloadingConfig"), "reload")
   }
 
   function openConfig() {
     if (!ready) return
-    enqueue(["open-config"], "正在打开配置文件", "open")
+    enqueue(["open-config"], t("openingConfig"), "open")
   }
 
   // --- latency probes ------------------------------------------------------
@@ -550,7 +569,7 @@ Item {
     } else if (data.delay !== undefined) {
       next[name] = Number(data.delay)
     } else {
-      // { "message": "..." } means the probe failed; 0 renders as 超时.
+      // { "message": "..." } means the probe failed; 0 renders as timeout.
       next[name] = 0
     }
 
@@ -562,6 +581,7 @@ Item {
   onReadyChanged: {
     if (!ready) return
     endpointProc.running = true
+    langProc.running = true
     refresh()
   }
 
@@ -593,6 +613,28 @@ Item {
   }
 
   Process {
+    id: langProc
+    command: ["/usr/bin/bash", root.runner, "lang"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          var data = JSON.parse(text)
+          if (data.language === "zh" || data.language === "en")
+            root.language = String(data.language)
+        } catch (e) {
+          // Keep the English default.
+        }
+      }
+    }
+  }
+
+  Process {
+    id: langSetProc
+    command: ["/usr/bin/bash", root.runner, "set-lang", "en"]
+  }
+
+  Process {
     id: endpointProc
     command: ["/usr/bin/bash", root.runner, "endpoint"]
     stdout: StdioCollector {
@@ -620,7 +662,7 @@ Item {
     onExited: function(exitCode) {
       if (exitCode !== 0 && root.lastError === "") {
         root.connected = false
-        root.lastError = "无法连接 mihomo 内核"
+        root.lastError = root.t("connectFailed")
       }
     }
   }
@@ -677,11 +719,11 @@ Item {
       var kind = actionProc.actionKind
       root.configReloading = false
       if (exitCode !== 0 || err !== "") {
-        root.notice = err !== "" ? err : "操作失败"
+        root.notice = err !== "" ? err : root.t("actionFailed")
       } else if (kind === "reload") {
-        root.notice = "配置已重载"
+        root.notice = root.t("configReloaded")
       } else if (kind === "open") {
-        root.notice = "已打开编辑器"
+        root.notice = root.t("editorOpened")
       }
       root.runNextAction()
       root.refresh()

@@ -16,7 +16,7 @@ Badge {
   // mihomo reports a failed probe as 0, and -1 is our own "never probed".
   text: busy ? "···"
     : ms < 0 ? "--"
-    : ms === 0 ? "超时"
+    : ms === 0 ? (svc ? svc.t("timeout") : "timeout")
     : String(ms)
 
   tint: busy || ms < 0 ? Util.alpha(foreground, 0.45)

@@ -102,7 +102,7 @@ Panel {
     tooltipText: root.svc && root.svc.connected
       ? ("mihomo " + root.svc.version + " · " + root.svc.modeLabel
          + "\n↑ " + root.svc.fmtSpeed(root.svc.upSpeed) + "  ↓ " + root.svc.fmtSpeed(root.svc.downSpeed))
-      : "mihomo · 未连接"
+      : (root.svc ? root.svc.t("barDisconnected") : "mihomo · disconnected")
     fixedWidth: vertical ? -1 : barContent.implicitWidth + Style.spaceReal(10)
     fixedHeight: vertical ? Style.bar.iconSlot : -1
     onPressed: function(mouseButton) { root.toggle() }
@@ -238,7 +238,8 @@ Panel {
 
               Text {
                 width: parent.width
-                text: root.svc && root.svc.version !== "" ? root.svc.version : "离线"
+                text: root.svc && root.svc.version !== "" ? root.svc.version
+                  : (root.svc ? root.svc.t("offline") : "Offline")
                 color: Util.alpha(root.fg, 0.45)
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
@@ -248,11 +249,11 @@ Panel {
             }
           }
 
-          NavButton { width: parent.width; pageId: "home";        glyph: "󰋜"; title: "首页" }
-          NavButton { width: parent.width; pageId: "proxies";     glyph: "󰖟"; title: "代理" }
-          NavButton { width: parent.width; pageId: "config";      glyph: "󰈙"; title: "配置" }
-          NavButton { width: parent.width; pageId: "connections"; glyph: "󰇧"; title: "连接" }
-          NavButton { width: parent.width; pageId: "rules";       glyph: "󰘬"; title: "规则" }
+          NavButton { width: parent.width; pageId: "home";        glyph: "󰋜"; title: root.svc ? root.svc.t("navHome") : "Home" }
+          NavButton { width: parent.width; pageId: "proxies";     glyph: "󰖟"; title: root.svc ? root.svc.t("navProxies") : "Proxies" }
+          NavButton { width: parent.width; pageId: "config";      glyph: "󰈙"; title: root.svc ? root.svc.t("navConfig") : "Config" }
+          NavButton { width: parent.width; pageId: "connections"; glyph: "󰇧"; title: root.svc ? root.svc.t("navConnections") : "Connections" }
+          NavButton { width: parent.width; pageId: "rules";       glyph: "󰘬"; title: root.svc ? root.svc.t("navRules") : "Rules" }
         }
 
         Column {
@@ -270,6 +271,14 @@ Panel {
           }
 
           Item { width: 1; height: Style.space(3) }
+
+          LanguageSwitch {
+            width: parent.width
+            compact: true
+            svc: root.svc
+            foreground: root.fg
+            fontFamily: root.fontFamily
+          }
 
           MiniStat { width: parent.width; glyph: "󰁝"; value: root.svc ? root.svc.fmtSpeed(root.svc.upSpeed) : "--" }
           MiniStat { width: parent.width; glyph: "󰁅"; value: root.svc ? root.svc.fmtSpeed(root.svc.downSpeed) : "--" }

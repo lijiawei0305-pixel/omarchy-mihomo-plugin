@@ -1,66 +1,83 @@
 # Mihomo
 
-Omarchy 状态栏插件：mihomo 内核的控制面板。左侧导航栏 + 右侧内容页，
-覆盖 **首页 / 代理 / 配置 / 连接 / 规则** 五个页面。
+Omarchy bar plugin: a control panel for the mihomo core. Left nav rail plus a
+right-hand page, covering **Home / Proxies / Config / Connections / Rules**.
 
-直接对接 mihomo 的 external controller（RESTful API），**不依赖 Clash Verge
-或任何其他 GUI 客户端**。卸载 GUI、只留内核照样能用。
+Talks to mihomo's external controller (REST API) directly. It does **not**
+depend on Clash Verge or any other GUI client. The core alone is enough.
 
-## 页面
+The UI defaults to **English**. Switch to Chinese with the EN / 中文 buttons
+in the sidebar or on the Config page.
 
-| 页面 | 内容 | 涉及接口 |
-|------|------|----------|
-| 首页 | 当前节点（代理组 / 节点两级选择、延迟、链路）、网络设置（只读）、代理模式、流量统计 | `/version` `/configs` `/proxies` `/traffic` `/memory` |
-| 代理 | 代理组列表，展开查看节点、点选切换、整组或单节点测延迟 | `/proxies` `/proxies/{name}` `/group/{name}/delay` |
-| 配置 | 手写 yaml 的路径 / 统计、重载内核、打开编辑器；规则集合可手动更新 | `configinfo` `PUT /configs` `/providers/rules` |
-| 连接 | 活跃连接、上下行流量、链路与命中规则，支持过滤、单条关闭、全部关闭 | `/connections` |
-| 规则 | 配置文件里的全部规则，支持按域名 / 类型 / 目标过滤 | `/rules` |
+## Pages
 
-写操作（切换节点、切换模式、测延迟、关闭连接、更新 provider）都是真的写到
-正在运行的内核里，和其他前端看到的是同一份状态。
+| Page | What it shows | APIs |
+|------|----------------|------|
+| Home | Current node (group / node, latency, chain), read-only network settings, proxy mode, traffic | `/version` `/configs` `/proxies` `/traffic` `/memory` |
+| Proxies | Proxy groups, expand nodes, switch, group or single-node latency tests | `/proxies` `/proxies/{name}` `/group/{name}/delay` |
+| Config | Hand-written yaml path / stats, reload the core, open the editor; rule providers can be refreshed | `configinfo` `PUT /configs` `/providers/rules` |
+| Connections | Active connections, up/down, chain and matched rule; filter, close one, close all | `/connections` |
+| Rules | Every rule from the config; filter by domain / type / target | `/rules` |
 
-## 端点发现
+Writes (switch node, switch mode, latency test, close connections, update a
+provider) go to the running core. Other front-ends see the same state.
 
-面板从不硬编码地址。每次调用 `bin/mihomo-ctl` 时按顺序探测，第一个命中即用：
+## Language
 
-1. `~/.config/omarchy-mihomo/config` —— 手动覆盖
-2. 正在运行的内核进程参数 —— `-ext-ctl` / `-ext-ctl-unix` / `-secret`
-3. 该进程启动时用的 yaml —— `external-controller` / `external-controller-unix` / `secret`
-4. `127.0.0.1:9090`，无 secret —— mihomo 的默认值
+Default is English. The EN / 中文 switch is in the sidebar footer and on the
+Config page. The choice is stored in `~/.config/omarchy-mihomo/ui` and survives
+restarts:
 
-所以内核跑在 TCP 端口上还是 Unix socket 上、有没有 secret，插件都能自己找到。
-换成独立 mihomo 之后不需要改任何配置。
+```
+language = en
+```
 
-想手动指定时，新建 `~/.config/omarchy-mihomo/config`：
+Use `zh` for Chinese.
+
+## Endpoint discovery
+
+The panel never hardcodes an address. Every `bin/mihomo-ctl` call probes in
+order and uses the first hit:
+
+1. `~/.config/omarchy-mihomo/config` — manual override
+2. Flags on the running core — `-ext-ctl` / `-ext-ctl-unix` / `-secret`
+3. The yaml that core was started with — `external-controller` / `external-controller-unix` / `secret`
+4. `127.0.0.1:9090`, no secret — mihomo's default
+
+So it finds the core whether it listens on a TCP port or a Unix socket, with or
+without a secret. Switching to a standalone mihomo unit needs no plugin config.
+
+To pin the endpoint yourself, create `~/.config/omarchy-mihomo/config`:
 
 ```
 endpoint = 127.0.0.1:9090
-# 或者用 unix socket：
+# or a unix socket:
 # socket = /run/mihomo/mihomo.sock
 secret = your-secret
 ```
 
-排查连接问题：
+Check what was resolved:
 
 ```bash
 ~/.config/omarchy/plugins/io.github.leeyiwei0305.mihomo/bin/mihomo-ctl endpoint
 ```
 
-## 键盘操作
+## Keyboard
 
-面板打开后（`Esc` 关闭，`Tab` 切到相邻面板）：
+With the panel open (`Esc` closes, `Tab` moves to the next panel):
 
-| 按键 | 作用 |
-|------|------|
-| `1` – `5` | 跳到 首页 / 代理 / 配置 / 连接 / 规则 |
-| `←` `→` `h` `l` | 上一页 / 下一页 |
-| `↑` `↓` `j` `k` | 滚动当前页 |
-| `/` | 聚焦过滤框（连接、规则页） |
-| `r` | 刷新当前页 |
+| Key | Action |
+|-----|--------|
+| `1` – `5` | Jump to Home / Proxies / Config / Connections / Rules |
+| `←` `→` `h` `l` | Previous / next page |
+| `↑` `↓` `j` `k` | Scroll the current page |
+| `/` | Focus the filter (Connections, Rules) |
+| `r` | Refresh the current page |
 
-在代理页，节点行左键点击 = 切换，右键点击 = 测这一个节点的延迟。
+On the Proxies page, left-click a node to switch, right-click to test that
+node's latency.
 
-## 安装
+## Install
 
 ```bash
 git clone https://github.com/lijiawei0305-pixel/omarchy-mihomo-plugin.git
@@ -70,28 +87,31 @@ omarchy plugin enable io.github.leeyiwei0305.mihomo
 omarchy bar move io.github.leeyiwei0305.mihomo --section right
 ```
 
-`./deploy` 会校验 manifest、同步到
-`~/.config/omarchy/plugins/io.github.leeyiwei0305.mihomo/`，并重启 shell。
-热重载偶尔不生效，重启最可靠。
+`./deploy` validates the manifest, syncs to
+`~/.config/omarchy/plugins/io.github.leeyiwei0305.mihomo/`, and restarts the
+shell. Hot reload is unreliable; a restart is the sure way.
 
-## 卸载
+## Uninstall
 
 ```bash
 omarchy plugin disable io.github.leeyiwei0305.mihomo
 rm -rf ~/.config/omarchy/plugins/io.github.leeyiwei0305.mihomo
 ```
 
-## 依赖
+## Dependencies
 
-`curl`、`bash`。内核侧需要开启 external controller（默认就是开的）。
+`curl`, `bash`. The core needs its external controller enabled (it is on by
+default).
 
-## 说明
+## Notes
 
-- 网络设置（端口、TUN、局域网、IPv6）是**只读**的。这些要改配置文件后重载内核，
-  不适合从状态栏面板随手改。
-- 只有 `Selector` 类型的代理组能手动指定节点。`URLTest` / `Fallback` /
-  `LoadBalance` 由内核自己决定，接口也不接受手动指定。
-- 配置页对的是这份手写 yaml。节点都写在 `proxies:` 里，没有订阅拉取。
-  规则集合仍可在配置页手动更新。改完文件后点「重载配置」，不用重启服务。
-- 面板关闭时只保留 30 秒一次的轻量轮询；打开时才建立 `/traffic` 与 `/memory`
-  的流式连接，并按当前页决定拉取什么。
+- Network settings (ports, TUN, LAN, IPv6) are **read-only**. Change the yaml
+  and reload the core; they are not meant to be flipped from a bar panel.
+- Only `Selector` groups accept a manual node. `URLTest` / `Fallback` /
+  `LoadBalance` are chosen by the core, and the API rejects a forced pick.
+- The Config page is that handwritten yaml. Nodes live under `proxies:`; there
+  is no subscription fetch. Rule providers can still be refreshed by hand.
+  After you save the file, use **Reload config** — no service restart needed.
+- While the panel is closed it only does a light poll every 30 seconds. Opening
+  it starts the `/traffic` and `/memory` streams and fetches whatever the
+  current page needs.

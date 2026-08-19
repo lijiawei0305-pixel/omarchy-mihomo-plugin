@@ -2,7 +2,7 @@ import QtQuick
 import qs.Ui
 import qs.Commons
 
-// 规则 / 全局 / 直连. Writes straight through to PATCH /configs, which is what
+// Rule / Global / Direct. Writes straight through to PATCH /configs, which is what
 // every other mihomo front-end does, so switching here is visible everywhere.
 Row {
   id: root
@@ -14,8 +14,8 @@ Row {
   spacing: Style.space(8)
 
   Button {
-    text: "规则"
-    tooltipText: "按规则分流"
+    text: root.svc ? root.svc.t("modeRule") : "Rule"
+    tooltipText: root.svc ? root.svc.t("modeRuleTip") : "Route by rules"
     foreground: root.foreground
     fontFamily: root.fontFamily
     fontSize: Style.font.bodySmall
@@ -26,8 +26,8 @@ Row {
   }
 
   Button {
-    text: "全局"
-    tooltipText: "全部流量走 GLOBAL 选中的节点"
+    text: root.svc ? root.svc.t("modeGlobal") : "Global"
+    tooltipText: root.svc ? root.svc.t("modeGlobalTip") : "Send everything through the GLOBAL group"
     foreground: root.foreground
     fontFamily: root.fontFamily
     fontSize: Style.font.bodySmall
@@ -38,8 +38,8 @@ Row {
   }
 
   Button {
-    text: "直连"
-    tooltipText: "不走代理"
+    text: root.svc ? root.svc.t("modeDirect") : "Direct"
+    tooltipText: root.svc ? root.svc.t("modeDirectTip") : "Bypass the proxy"
     foreground: root.foreground
     fontFamily: root.fontFamily
     fontSize: Style.font.bodySmall

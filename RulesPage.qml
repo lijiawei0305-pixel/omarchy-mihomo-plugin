@@ -51,18 +51,18 @@ Item {
     anchors.left: parent.left
     anchors.right: parent.right
     anchors.top: parent.top
-    title: "规则"
+    title: root.svc ? root.svc.t("rulesTitle") : "Rules"
     subtitle: root.svc
       ? (root.filter === ""
-          ? root.svc.ruleCount + " 条规则"
-          : root.rows.length + " / " + root.svc.ruleCount + " 条规则")
+          ? root.svc.t("rulesCount", root.svc.ruleCount)
+          : root.svc.t("rulesFiltered", root.rows.length, root.svc.ruleCount))
       : ""
     foreground: root.fg
     fontFamily: root.fontFamily
 
     PanelActionButton {
       iconText: "󰑐"
-      tooltipText: "重新读取规则"
+      tooltipText: root.svc ? root.svc.t("refreshRules") : "Reload rules"
       foreground: root.fg
       hoverColor: Color.accent
       fontFamily: root.fontFamily
@@ -86,7 +86,7 @@ Item {
     anchors.right: parent.right
     anchors.top: headerRule.bottom
     anchors.topMargin: Style.space(12)
-    placeholderText: "过滤域名 / 规则类型 / 目标"
+    placeholderText: root.svc ? root.svc.t("filterRules") : "Filter domain / type / target"
     foreground: root.fg
     accent: Color.accent
     font.family: root.fontFamily
@@ -194,10 +194,10 @@ Item {
     anchors.centerIn: listView
     width: listView.width - Style.space(40)
     visible: root.rows.length === 0
-    text: root.svc && root.svc.rulesLoading ? "正在读取规则…"
-      : root.svc && !root.svc.connected ? "未连接到 mihomo 内核。"
-      : root.filter !== "" ? "没有匹配的规则。"
-      : "配置里没有规则。"
+    text: root.svc && root.svc.rulesLoading ? root.svc.t("loadingRules")
+      : root.svc && !root.svc.connected ? root.svc.t("notConnected")
+      : root.filter !== "" ? root.svc.t("noMatchRules")
+      : (root.svc ? root.svc.t("noRules") : "")
     color: Util.alpha(root.fg, 0.45)
     font.family: root.fontFamily
     font.pixelSize: Style.font.bodySmall

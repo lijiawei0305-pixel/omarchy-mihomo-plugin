@@ -45,18 +45,19 @@ Item {
     anchors.left: parent.left
     anchors.right: parent.right
     anchors.top: parent.top
-    title: "连接"
+    title: root.svc ? root.svc.t("connectionsTitle") : "Connections"
     subtitle: root.svc
-      ? "活跃 " + root.svc.connections.length
-        + " · 下载 " + root.svc.fmtBytes(root.svc.downTotal)
-        + " · 上传 " + root.svc.fmtBytes(root.svc.upTotal)
+      ? root.svc.t("connectionsSubtitle",
+                   root.svc.connections.length,
+                   root.svc.fmtBytes(root.svc.downTotal),
+                   root.svc.fmtBytes(root.svc.upTotal))
       : ""
     foreground: root.fg
     fontFamily: root.fontFamily
 
     Button {
       anchors.verticalCenter: parent.verticalCenter
-      text: "关闭全部"
+      text: root.svc ? root.svc.t("closeAll") : "Close all"
       foreground: root.fg
       fontFamily: root.fontFamily
       fontSize: Style.font.bodySmall
@@ -82,7 +83,7 @@ Item {
     anchors.right: parent.right
     anchors.top: headerRule.bottom
     anchors.topMargin: Style.space(12)
-    placeholderText: "过滤主机 / 进程 / 链路 / 规则"
+    placeholderText: root.svc ? root.svc.t("filterConnections") : "Filter host / process / chain / rule"
     foreground: root.fg
     accent: Color.accent
     font.family: root.fontFamily
@@ -195,7 +196,7 @@ Item {
         anchors.rightMargin: Style.space(8)
         anchors.verticalCenter: parent.verticalCenter
         iconText: "󰅖"
-        tooltipText: "关闭这条连接"
+        tooltipText: root.svc ? root.svc.t("closeConnection") : "Close this connection"
         foreground: root.fg
         hoverColor: Color.urgent
         fontFamily: root.fontFamily
@@ -208,9 +209,9 @@ Item {
     anchors.centerIn: listView
     width: listView.width - Style.space(40)
     visible: root.rows.length === 0
-    text: root.svc && !root.svc.connected ? "未连接到 mihomo 内核。"
-      : root.filter !== "" ? "没有匹配的连接。"
-      : "当前没有活跃连接。"
+    text: root.svc && !root.svc.connected ? root.svc.t("notConnected")
+      : root.filter !== "" ? (root.svc ? root.svc.t("noMatchConnections") : "")
+      : (root.svc ? root.svc.t("noActiveConnections") : "")
     color: Util.alpha(root.fg, 0.45)
     font.family: root.fontFamily
     font.pixelSize: Style.font.bodySmall

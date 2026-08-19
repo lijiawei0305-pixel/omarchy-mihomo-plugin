@@ -66,10 +66,10 @@ Item {
     anchors.left: parent.left
     anchors.right: parent.right
     anchors.top: parent.top
-    title: "首页"
+    title: root.svc ? root.svc.t("homeTitle") : "Home"
     subtitle: {
       if (!svc) return ""
-      if (!svc.connected) return svc.lastError !== "" ? svc.lastError : "未连接"
+      if (!svc.connected) return svc.lastError !== "" ? svc.lastError : svc.t("disconnected")
       return "mihomo " + svc.version + " · " + svc.endpointTransport + " · " + svc.endpointTarget
     }
     foreground: root.fg
@@ -77,7 +77,7 @@ Item {
 
     PanelActionButton {
       iconText: "󰑐"
-      tooltipText: "立即刷新"
+      tooltipText: root.svc ? root.svc.t("refreshNow") : "Refresh now"
       foreground: root.fg
       hoverColor: Color.accent
       fontFamily: root.fontFamily
@@ -143,7 +143,7 @@ Item {
 
             Text {
               width: parent.width
-              text: root.leafNode !== "" ? root.leafNode : "无可用节点"
+              text: root.leafNode !== "" ? root.leafNode : (root.svc ? root.svc.t("noNode") : "No node available")
               color: root.fg
               font.family: root.fontFamily
               font.pixelSize: Style.font.subtitle
@@ -188,7 +188,7 @@ Item {
             PanelActionButton {
               anchors.verticalCenter: parent.verticalCenter
               iconText: "󰓅"
-              tooltipText: "测试该节点延迟"
+              tooltipText: root.svc ? root.svc.t("testNodeDelay") : "Test this node's latency"
               foreground: root.fg
               hoverColor: Color.accent
               fontFamily: root.fontFamily
@@ -200,7 +200,7 @@ Item {
 
         Dropdown {
           width: parent.width
-          label: "代理组"
+          label: root.svc ? root.svc.t("proxyGroup") : "Proxy group"
           foreground: root.fg
           fontFamily: root.fontFamily
           options: root.groups
@@ -210,7 +210,7 @@ Item {
 
         Dropdown {
           width: parent.width
-          label: "节点"
+          label: root.svc ? root.svc.t("node") : "Node"
           foreground: root.fg
           fontFamily: root.fontFamily
           enabled: root.groupProxy !== null && String(root.groupProxy.type) === "Selector"
@@ -225,7 +225,7 @@ Item {
         Text {
           width: parent.width
           visible: root.groupProxy !== null && String(root.groupProxy.type) !== "Selector"
-          text: "该组是 " + (root.groupProxy ? root.groupProxy.type : "") + "，节点由内核按延迟自动选择。"
+          text: root.svc ? root.svc.t("autoSelectHint", root.groupProxy ? root.groupProxy.type : "") : ""
           color: Util.alpha(root.fg, 0.5)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -241,15 +241,16 @@ Item {
         foreground: root.fg
 
         PanelSectionHeader {
-          text: "网络设置"
+          text: root.svc ? root.svc.t("networkSettings") : "Network"
           foreground: root.fg
           fontFamily: root.fontFamily
         }
 
         InfoRow {
           width: parent.width
-          label: "混合端口"
-          value: root.svc && root.svc.mixedPort > 0 ? String(root.svc.mixedPort) : "未启用"
+          label: root.svc ? root.svc.t("mixedPort") : "Mixed port"
+          value: root.svc && root.svc.mixedPort > 0 ? String(root.svc.mixedPort)
+            : (root.svc ? root.svc.t("notEnabled") : "Off")
           foreground: root.fg
           fontFamily: root.fontFamily
           valueBold: true
@@ -257,10 +258,10 @@ Item {
 
         InfoRow {
           width: parent.width
-          label: "虚拟网卡 (TUN)"
+          label: root.svc ? root.svc.t("tun") : "TUN"
           value: root.svc && root.svc.tunEnabled
-            ? "已启用 · " + root.svc.tunDevice + " · " + root.svc.tunStack
-            : "已关闭"
+            ? root.svc.t("tunEnabled", root.svc.tunDevice, root.svc.tunStack)
+            : (root.svc ? root.svc.t("disabled") : "Off")
           valueColor: root.svc && root.svc.tunEnabled ? Color.accent : Util.alpha(root.fg, 0.75)
           foreground: root.fg
           fontFamily: root.fontFamily
@@ -269,8 +270,9 @@ Item {
 
         InfoRow {
           width: parent.width
-          label: "局域网连接"
-          value: root.svc && root.svc.allowLan ? "允许" : "禁止"
+          label: root.svc ? root.svc.t("lanAccess") : "LAN"
+          value: root.svc && root.svc.allowLan
+            ? root.svc.t("allow") : (root.svc ? root.svc.t("deny") : "Deny")
           foreground: root.fg
           fontFamily: root.fontFamily
         }
@@ -278,14 +280,15 @@ Item {
         InfoRow {
           width: parent.width
           label: "IPv6"
-          value: root.svc && root.svc.ipv6 ? "开启" : "关闭"
+          value: root.svc && root.svc.ipv6
+            ? root.svc.t("on") : (root.svc ? root.svc.t("off") : "Off")
           foreground: root.fg
           fontFamily: root.fontFamily
         }
 
         InfoRow {
           width: parent.width
-          label: "进程匹配 / 日志"
+          label: root.svc ? root.svc.t("processLog") : "Process match / log"
           value: (root.svc ? root.svc.findProcessMode : "") + " · " + (root.svc ? root.svc.logLevel : "")
           foreground: root.fg
           fontFamily: root.fontFamily
@@ -293,7 +296,7 @@ Item {
 
         Text {
           width: parent.width
-          text: "这些值来自内核当前配置，只读。改动请编辑配置文件，再到配置页点重载。"
+          text: root.svc ? root.svc.t("networkSettingsHint") : ""
           color: Util.alpha(root.fg, 0.42)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -310,7 +313,7 @@ Item {
         foreground: root.fg
 
         PanelSectionHeader {
-          text: "代理模式"
+          text: root.svc ? root.svc.t("proxyMode") : "Proxy mode"
           foreground: root.fg
           fontFamily: root.fontFamily
         }
@@ -324,10 +327,10 @@ Item {
         Text {
           width: parent.width
           text: root.svc && root.svc.mode === "global"
-            ? "全局：所有流量都走 GLOBAL 组选中的节点，规则不生效。"
+            ? root.svc.t("modeGlobalHint")
             : root.svc && root.svc.mode === "direct"
-              ? "直连：所有流量绕过代理，等同于临时关闭。"
-              : "规则：按配置文件里的规则分流，日常使用的默认模式。"
+              ? root.svc.t("modeDirectHint")
+              : (root.svc ? root.svc.t("modeRuleHint") : "")
           color: Util.alpha(root.fg, 0.5)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -344,7 +347,7 @@ Item {
         foreground: root.fg
 
         PanelSectionHeader {
-          text: "流量统计"
+          text: root.svc ? root.svc.t("traffic") : "Traffic"
           foreground: root.fg
           fontFamily: root.fontFamily
         }
@@ -356,7 +359,7 @@ Item {
           SpeedCell {
             width: (parent.width - parent.spacing) / 2
             glyph: "󰁝"
-            caption: "上传"
+            caption: root.svc ? root.svc.t("upload") : "Upload"
             value: root.svc ? root.svc.fmtSpeed(root.svc.upSpeed) : "--"
             foreground: root.fg
             fontFamily: root.fontFamily
@@ -365,7 +368,7 @@ Item {
           SpeedCell {
             width: (parent.width - parent.spacing) / 2
             glyph: "󰁅"
-            caption: "下载"
+            caption: root.svc ? root.svc.t("download") : "Download"
             value: root.svc ? root.svc.fmtSpeed(root.svc.downSpeed) : "--"
             foreground: root.fg
             fontFamily: root.fontFamily
@@ -374,7 +377,7 @@ Item {
 
         InfoRow {
           width: parent.width
-          label: "累计上传 / 下载"
+          label: root.svc ? root.svc.t("trafficTotal") : "Total up / down"
           value: root.svc
             ? root.svc.fmtBytes(root.svc.upTotal) + "  /  " + root.svc.fmtBytes(root.svc.downTotal)
             : "--"
@@ -385,7 +388,7 @@ Item {
 
         InfoRow {
           width: parent.width
-          label: "内核内存占用"
+          label: root.svc ? root.svc.t("kernelMemory") : "Core memory"
           value: root.svc ? root.svc.fmtBytes(root.svc.memInuse) : "--"
           foreground: root.fg
           fontFamily: root.fontFamily

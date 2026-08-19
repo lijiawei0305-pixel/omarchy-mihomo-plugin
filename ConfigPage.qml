@@ -3,7 +3,7 @@ import QtQuick.Controls
 import qs.Ui
 import qs.Commons
 
-// 配置 = the handwritten yaml the core is running, plus rule-providers.
+// Config = the handwritten yaml the core is running, plus rule-providers.
 // Node lists live on the proxy page; this page is the file and the rule sets.
 Item {
   id: root
@@ -14,7 +14,8 @@ Item {
 
   function fmtUpdated(stamp) {
     var text = String(stamp || "")
-    if (text === "" || text.indexOf("0001-01-01") === 0) return "尚未拉取"
+    if (text === "" || text.indexOf("0001-01-01") === 0)
+      return svc ? svc.t("neverFetched") : "Never fetched"
     var parsed = new Date(text)
     if (isNaN(parsed.getTime())) return text
     return Qt.formatDateTime(parsed, "yyyy-MM-dd hh:mm")
@@ -32,14 +33,12 @@ Item {
 
   function statsLine() {
     if (!svc) return ""
-    return svc.nodeCount + " 个节点 · "
-      + svc.groupNames.length + " 个代理组 · "
-      + svc.ruleCount + " 条规则 · "
-      + svc.ruleProviders.length + " 个规则集合"
+    return svc.t("statsLine", svc.nodeCount, svc.groupNames.length,
+                 svc.ruleCount, svc.ruleProviders.length)
   }
 
   function portLabel(name, value) {
-    return name + " " + (value > 0 ? String(value) : "关")
+    return name + " " + (value > 0 ? String(value) : (svc ? svc.t("portOff") : "off"))
   }
 
   function scrollBy(delta) {
@@ -54,14 +53,15 @@ Item {
     anchors.left: parent.left
     anchors.right: parent.right
     anchors.top: parent.top
-    title: "配置"
-    subtitle: root.svc && root.svc.configPath !== "" ? root.svc.configPath : "尚未定位到配置文件"
+    title: root.svc ? root.svc.t("configTitle") : "Config"
+    subtitle: root.svc && root.svc.configPath !== "" ? root.svc.configPath
+      : (root.svc ? root.svc.t("configNotFound") : "")
     foreground: root.fg
     fontFamily: root.fontFamily
 
     PanelActionButton {
       iconText: "󰑐"
-      tooltipText: "重新读取配置与规则集合"
+      tooltipText: root.svc ? root.svc.t("refreshConfig") : "Reload the file info and rule providers"
       foreground: root.fg
       hoverColor: Color.accent
       fontFamily: root.fontFamily
@@ -100,66 +100,20 @@ Item {
         foreground: root.fg
 
         PanelSectionHeader {
-          text: "配置文件"
+          text: root.svc ? root.svc.t("language") : "Language"
           foreground: root.fg
           fontFamily: root.fontFamily
         }
 
-        InfoRow {
-          width: parent.width
-          label: "路径"
-          value: root.svc && root.svc.configPath !== "" ? root.svc.configPath : "--"
+        LanguageSwitch {
+          svc: root.svc
           foreground: root.fg
           fontFamily: root.fontFamily
-        }
-
-        InfoRow {
-          width: parent.width
-          label: "大小 / 修改时间"
-          value: root.fmtSize(root.svc ? root.svc.configSize : 0)
-            + "  ·  " + root.fmtMtime(root.svc ? root.svc.configMtime : 0)
-          foreground: root.fg
-          fontFamily: root.fontFamily
-        }
-
-        InfoRow {
-          width: parent.width
-          label: "内核已加载"
-          value: root.statsLine()
-          foreground: root.fg
-          fontFamily: root.fontFamily
-          valueBold: true
-        }
-
-        Row {
-          spacing: Style.space(8)
-
-          Button {
-            text: root.svc && root.svc.configReloading ? "重载中…" : "重载配置"
-            tooltipText: "让内核重新读取这份 yaml，不用重启服务"
-            foreground: root.fg
-            fontFamily: root.fontFamily
-            fontSize: Style.font.bodySmall
-            bordered: true
-            enabled: root.svc !== null && root.svc.connected && !root.svc.configReloading
-            onClicked: root.svc.reloadConfig()
-          }
-
-          Button {
-            text: "用编辑器打开"
-            tooltipText: "用 Omarchy 默认编辑器打开配置文件"
-            foreground: root.fg
-            fontFamily: root.fontFamily
-            fontSize: Style.font.bodySmall
-            bordered: true
-            enabled: root.svc !== null && root.svc.configPath !== ""
-            onClicked: root.svc.openConfig()
-          }
         }
 
         Text {
           width: parent.width
-          text: "改完文件后点重载。重载失败会在底部提示，不会静默丢掉错误。"
+          text: root.svc ? root.svc.t("languageHint") : ""
           color: Util.alpha(root.fg, 0.45)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -174,7 +128,82 @@ Item {
         foreground: root.fg
 
         PanelSectionHeader {
-          text: "内核加载概览"
+          text: root.svc ? root.svc.t("configFile") : "Config file"
+          foreground: root.fg
+          fontFamily: root.fontFamily
+        }
+
+        InfoRow {
+          width: parent.width
+          label: root.svc ? root.svc.t("path") : "Path"
+          value: root.svc && root.svc.configPath !== "" ? root.svc.configPath : "--"
+          foreground: root.fg
+          fontFamily: root.fontFamily
+        }
+
+        InfoRow {
+          width: parent.width
+          label: root.svc ? root.svc.t("sizeMtime") : "Size / modified"
+          value: root.fmtSize(root.svc ? root.svc.configSize : 0)
+            + "  ·  " + root.fmtMtime(root.svc ? root.svc.configMtime : 0)
+          foreground: root.fg
+          fontFamily: root.fontFamily
+        }
+
+        InfoRow {
+          width: parent.width
+          label: root.svc ? root.svc.t("kernelLoaded") : "Loaded by the core"
+          value: root.statsLine()
+          foreground: root.fg
+          fontFamily: root.fontFamily
+          valueBold: true
+        }
+
+        Row {
+          spacing: Style.space(8)
+
+          Button {
+            text: root.svc && root.svc.configReloading
+              ? root.svc.t("reloading") : (root.svc ? root.svc.t("reload") : "Reload config")
+            tooltipText: root.svc ? root.svc.t("reloadTip") : ""
+            foreground: root.fg
+            fontFamily: root.fontFamily
+            fontSize: Style.font.bodySmall
+            bordered: true
+            enabled: root.svc !== null && root.svc.connected && !root.svc.configReloading
+            onClicked: root.svc.reloadConfig()
+          }
+
+          Button {
+            text: root.svc ? root.svc.t("openEditor") : "Open in editor"
+            tooltipText: root.svc ? root.svc.t("openEditorTip") : ""
+            foreground: root.fg
+            fontFamily: root.fontFamily
+            fontSize: Style.font.bodySmall
+            bordered: true
+            enabled: root.svc !== null && root.svc.configPath !== ""
+            onClicked: root.svc.openConfig()
+          }
+        }
+
+        Text {
+          width: parent.width
+          text: root.svc ? root.svc.t("reloadHint") : ""
+          color: Util.alpha(root.fg, 0.45)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+          lineHeight: 1.25
+          renderType: Text.NativeRendering
+        }
+      }
+
+      Card {
+        width: parent.width
+        foreground: root.fg
+
+        PanelSectionHeader {
+          text: root.svc ? root.svc.t("kernelOverview") : "Core overview"
           foreground: root.fg
           fontFamily: root.fontFamily
         }
@@ -184,7 +213,7 @@ Item {
           label: "DNS"
           value: {
             if (!root.svc) return "--"
-            var parts = [root.svc.dnsEnabled ? "已启用" : "关闭"]
+            var parts = [root.svc.dnsEnabled ? root.svc.t("dnsOn") : root.svc.t("dnsOff")]
             if (root.svc.dnsMode !== "") parts.push(root.svc.dnsMode)
             if (root.svc.dnsListen !== "") parts.push(root.svc.dnsListen)
             if (root.svc.dnsFakeIp !== "") parts.push(root.svc.dnsFakeIp)
@@ -196,7 +225,7 @@ Item {
 
         InfoRow {
           width: parent.width
-          label: "监听端口"
+          label: root.svc ? root.svc.t("listenPorts") : "Listen ports"
           value: {
             if (!root.svc) return "--"
             return root.portLabel("mixed", root.svc.mixedPort)
@@ -214,9 +243,9 @@ Item {
           label: "TUN"
           value: {
             if (!root.svc) return "--"
-            if (!root.svc.tunEnabled) return "已关闭"
+            if (!root.svc.tunEnabled) return root.svc.t("tunOff")
             return root.svc.tunDevice + " · " + root.svc.tunStack
-              + " · auto-route " + (root.svc.tunAutoRoute ? "开" : "关")
+              + " · auto-route " + (root.svc.tunAutoRoute ? root.svc.t("autoRouteOn") : root.svc.t("autoRouteOff"))
               + (root.svc.tunDnsHijack !== "" ? " · hijack " + root.svc.tunDnsHijack : "")
           }
           valueColor: root.svc && root.svc.tunEnabled ? Color.accent : Util.alpha(root.fg, 0.75)
@@ -227,12 +256,12 @@ Item {
 
         InfoRow {
           width: parent.width
-          label: "嗅探 / geo"
+          label: root.svc ? root.svc.t("sniffGeo") : "Sniffer / geo"
           value: {
             if (!root.svc) return "--"
-            return (root.svc.sniffing ? "嗅探开" : "嗅探关")
+            return (root.svc.sniffing ? root.svc.t("sniffOn") : root.svc.t("sniffOff"))
               + "  ·  " + (root.svc.geodataMode ? "dat" : "mmdb")
-              + "  ·  自动更新" + (root.svc.geoAutoUpdate ? "开" : "关")
+              + "  ·  " + (root.svc.geoAutoUpdate ? root.svc.t("geoAutoOn") : root.svc.t("geoAutoOff"))
           }
           foreground: root.fg
           fontFamily: root.fontFamily
@@ -240,7 +269,7 @@ Item {
       }
 
       PanelSectionHeader {
-        text: "规则集合"
+        text: root.svc ? root.svc.t("ruleProviders") : "Rule providers"
         foreground: root.fg
         fontFamily: root.fontFamily
       }
@@ -282,7 +311,9 @@ Item {
 
             Text {
               width: parent.width
-              text: modelData.behavior + " · " + modelData.count + " 条 · " + root.fmtUpdated(modelData.updatedAt)
+              text: root.svc
+                ? root.svc.t("ruleProviderMeta", modelData.behavior, modelData.count, root.fmtUpdated(modelData.updatedAt))
+                : ""
               color: Util.alpha(root.fg, 0.5)
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
@@ -297,7 +328,7 @@ Item {
             anchors.rightMargin: Style.space(10)
             anchors.verticalCenter: parent.verticalCenter
             iconText: "󰑐"
-            tooltipText: "重新拉取该规则集合"
+            tooltipText: root.svc ? root.svc.t("updateRuleSet") : "Fetch this rule provider again"
             foreground: root.fg
             hoverColor: Color.accent
             fontFamily: root.fontFamily

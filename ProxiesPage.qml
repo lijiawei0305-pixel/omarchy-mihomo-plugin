@@ -51,8 +51,10 @@ Item {
     anchors.left: parent.left
     anchors.right: parent.right
     anchors.top: parent.top
-    title: "代理组"
-    subtitle: root.visibleGroups.length + " 个组 · 当前模式 " + (root.svc ? root.svc.modeLabel : "")
+    title: root.svc ? root.svc.t("proxiesTitle") : "Proxy groups"
+    subtitle: root.svc
+      ? root.svc.t("groupsCount", root.visibleGroups.length, root.svc.modeLabel)
+      : ""
     foreground: root.fg
     fontFamily: root.fontFamily
 
@@ -93,8 +95,8 @@ Item {
         width: parent.width
         visible: root.visibleGroups.length === 0
         text: root.svc && root.svc.connected
-          ? "当前配置里没有代理组。"
-          : "未连接到 mihomo 内核。"
+          ? root.svc.t("noGroups")
+          : root.svc.t("notConnected")
         color: Util.alpha(root.fg, 0.5)
         font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall
@@ -193,7 +195,7 @@ Item {
         PanelActionButton {
           anchors.verticalCenter: parent.verticalCenter
           iconText: "󰓅"
-          tooltipText: "测试整组延迟"
+          tooltipText: root.svc ? root.svc.t("testGroup") : "Test the whole group"
           foreground: root.fg
           hoverColor: Color.accent
           fontFamily: root.fontFamily
@@ -204,7 +206,9 @@ Item {
         PanelActionButton {
           anchors.verticalCenter: parent.verticalCenter
           iconText: card.open ? "󰅀" : "󰅂"
-          tooltipText: card.open ? "收起节点" : "展开节点"
+          tooltipText: root.svc
+            ? (card.open ? root.svc.t("collapseNodes") : root.svc.t("expandNodes"))
+            : ""
           foreground: root.fg
           hoverColor: Color.accent
           fontFamily: root.fontFamily
@@ -251,10 +255,11 @@ Item {
         renderType: Text.NativeRendering
 
         function groupTypeHint(type) {
-          if (type === "URLTest") return "URLTest 组由内核按延迟自动挑选，无法手动指定节点。"
-          if (type === "Fallback") return "Fallback 组按顺序使用第一个可用节点。"
-          if (type === "LoadBalance") return "LoadBalance 组在节点之间分摊连接。"
-          return "该组类型不支持手动切换节点。"
+          if (!root.svc) return ""
+          if (type === "URLTest") return root.svc.t("hintUrlTest")
+          if (type === "Fallback") return root.svc.t("hintFallback")
+          if (type === "LoadBalance") return root.svc.t("hintLoadBalance")
+          return root.svc.t("hintOther")
         }
       }
     }

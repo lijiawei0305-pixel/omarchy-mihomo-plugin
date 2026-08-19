@@ -16,6 +16,7 @@
 set -u
 
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-mihomo/config"
+UI_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-mihomo/ui"
 TIMEOUT="${MIHOMO_CTL_TIMEOUT:-8}"
 
 SOCKET=""
@@ -164,6 +165,24 @@ yaml_nested() {
   done < "$file"
 }
 
+read_language() {
+  local lang="en" key value
+  if [[ -r "$UI_FILE" ]]; then
+    while IFS='=' read -r key value; do
+      key="$(trim "${key:-}")"
+      [[ -z "$key" || "$key" == \#* ]] && continue
+      value="$(trim "${value:-}")"
+      if [[ "$key" == language ]]; then
+        lang="$value"
+      fi
+    done < "$UI_FILE"
+  fi
+  case "$lang" in
+    zh|zh_CN|zh-CN|zh_Hans) printf 'zh' ;;
+    *) printf 'en' ;;
+  esac
+}
+
 resolve() {
   # Always parse the running core first so CORE_FILE / CORE_DIR are set even
   # when the user override wins for the API endpoint. configinfo / open-config
@@ -258,7 +277,7 @@ case "$command" in
   core)
     version="$(request GET /version)"
     if [[ -z "$version" ]]; then
-      fail "无法连接 mihomo (${SOURCE}: ${SOCKET:-$ADDRESS})"
+      fail "cannot reach mihomo (${SOURCE}: ${SOCKET:-$ADDRESS})"
     fi
     printf '{"version":%s,"configs":%s,"proxies":%s}\n' \
       "$(or_null "$version")" \
@@ -277,7 +296,7 @@ case "$command" in
   configinfo)
     path="$(core_config_path || true)"
     if [[ -z "$path" ]]; then
-      fail "找不到内核配置文件路径"
+        fail "config file path not found"
     fi
     size=""
     mtime=""
@@ -297,7 +316,7 @@ case "$command" in
 
   open-config)
     path="$(core_config_path || true)"
-    [[ -n "$path" ]] || fail "找不到内核配置文件路径"
+    [[ -n "$path" ]] || fail "config file path not found"
     launcher=""
     if command -v omarchy-launch-config-editor >/dev/null; then
       launcher="omarchy-launch-config-editor"
@@ -306,7 +325,7 @@ case "$command" in
     elif command -v xdg-open >/dev/null; then
       launcher="xdg-open"
     else
-      fail "找不到可用的编辑器启动器"
+      fail "no editor launcher found"
     fi
     # Must leave the panel's process group. Quickshell kills the group when
     # this Process exits; xdg-open + nvim.desktop also cannot spawn a TTY
@@ -315,6 +334,21 @@ case "$command" in
     setsid "$launcher" "$path" >/dev/null 2>&1 &
     printf '{"ok":true,"path":%s,"via":%s}\n' \
       "$(json_string "$path")" "$(json_string "$launcher")"
+    ;;
+
+  lang)
+    printf '{"language":%s}\n' "$(json_string "$(read_language)")"
+    ;;
+
+  set-lang)
+    lang="${1:-}"
+    case "$lang" in
+      en|zh) ;;
+      *) fail "language must be en or zh" ;;
+    esac
+    mkdir -p "$(dirname "$UI_FILE")"
+    printf 'language = %s\n' "$lang" > "$UI_FILE"
+    printf '{"language":%s}\n' "$(json_string "$lang")"
     ;;
 
   *)
