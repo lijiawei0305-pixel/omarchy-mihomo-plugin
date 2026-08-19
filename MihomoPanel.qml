@@ -12,8 +12,8 @@ import qs.Commons
 Panel {
   id: root
 
-  moduleName: "io.github.leeyiwei0305.mihomo"
-  ipcTarget: "io.github.leeyiwei0305.mihomo"
+  moduleName: "io.github.lijiawei0305-pixel.mihomo"
+  ipcTarget: "io.github.lijiawei0305-pixel.mihomo"
   manageIpc: false
 
   readonly property var svc: bar?.shell?.serviceFor(root.moduleName)

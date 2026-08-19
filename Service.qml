@@ -27,7 +27,7 @@ Item {
     && String(manifest.__sourceDir) !== ""
   readonly property string pluginDir: ready
     ? String(manifest.__sourceDir)
-    : Quickshell.env("HOME") + "/.config/omarchy/plugins/io.github.leeyiwei0305.mihomo"
+    : Quickshell.env("HOME") + "/.config/omarchy/plugins/io.github.lijiawei0305-pixel.mihomo"
   readonly property string runner: pluginDir + "/bin/mihomo-ctl"
 
   // Set by the panel. Drives poll cadence and the streaming subscriptions.
@@ -787,7 +787,7 @@ Item {
   }
 
   IpcHandler {
-    target: "io.github.leeyiwei0305.mihomo.service"
+    target: "io.github.lijiawei0305-pixel.mihomo.service"
 
     function state(): string {
       return JSON.stringify({

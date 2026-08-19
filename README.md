@@ -9,6 +9,37 @@ depend on Clash Verge or any other GUI client. The core alone is enough.
 The UI defaults to **English**. Switch to Chinese with the EN / 中文 buttons
 in the sidebar or on the Config page.
 
+License: MIT. See [LICENSE](LICENSE).
+
+## Install
+
+```sh
+omarchy plugin add https://github.com/lijiawei0305-pixel/omarchy-mihomo-plugin.git --enable
+omarchy bar move io.github.lijiawei0305-pixel.mihomo --section right
+```
+
+That clones the repo, validates `manifest.json`, and enables the plugin. It
+does not run an installer and does not ask for elevated privileges.
+
+## Remove
+
+```sh
+omarchy plugin remove io.github.lijiawei0305-pixel.mihomo
+```
+
+That disables the widget and deletes the plugin checkout. Language preference
+in `~/.config/omarchy-mihomo/ui` is left in place; delete that file yourself
+if you want it gone.
+
+## Dependencies
+
+- `bash` and `curl` (used by `bin/mihomo-ctl` to talk to the core)
+- A running [mihomo](https://github.com/MetaCubeX/mihomo) core with its
+  external controller enabled (the default)
+
+The plugin does not install mihomo, does not change system proxy settings, and
+does not write your yaml.
+
 ## Pages
 
 | Page | What it shows | APIs |
@@ -45,7 +76,7 @@ order and uses the first hit:
 4. `127.0.0.1:9090`, no secret — mihomo's default
 
 So it finds the core whether it listens on a TCP port or a Unix socket, with or
-without a secret. Switching to a standalone mihomo unit needs no plugin config.
+without a secret.
 
 To pin the endpoint yourself, create `~/.config/omarchy-mihomo/config`:
 
@@ -58,8 +89,8 @@ secret = your-secret
 
 Check what was resolved:
 
-```bash
-~/.config/omarchy/plugins/io.github.leeyiwei0305.mihomo/bin/mihomo-ctl endpoint
+```sh
+~/.config/omarchy/plugins/io.github.lijiawei0305-pixel.mihomo/bin/mihomo-ctl endpoint
 ```
 
 ## Keyboard
@@ -77,32 +108,6 @@ With the panel open (`Esc` closes, `Tab` moves to the next panel):
 On the Proxies page, left-click a node to switch, right-click to test that
 node's latency.
 
-## Install
-
-```bash
-git clone https://github.com/lijiawei0305-pixel/omarchy-mihomo-plugin.git
-cd omarchy-mihomo-plugin
-./deploy
-omarchy plugin enable io.github.leeyiwei0305.mihomo
-omarchy bar move io.github.leeyiwei0305.mihomo --section right
-```
-
-`./deploy` validates the manifest, syncs to
-`~/.config/omarchy/plugins/io.github.leeyiwei0305.mihomo/`, and restarts the
-shell. Hot reload is unreliable; a restart is the sure way.
-
-## Uninstall
-
-```bash
-omarchy plugin disable io.github.leeyiwei0305.mihomo
-rm -rf ~/.config/omarchy/plugins/io.github.leeyiwei0305.mihomo
-```
-
-## Dependencies
-
-`curl`, `bash`. The core needs its external controller enabled (it is on by
-default).
-
 ## Notes
 
 - Network settings (ports, TUN, LAN, IPv6) are **read-only**. Change the yaml
@@ -115,3 +120,20 @@ default).
 - While the panel is closed it only does a light poll every 30 seconds. Opening
   it starts the `/traffic` and `/memory` streams and fetches whatever the
   current page needs.
+
+## Development
+
+The repo is the source of truth. After an edit:
+
+```sh
+./deploy
+```
+
+That validates the manifest, syncs to
+`~/.config/omarchy/plugins/io.github.lijiawei0305-pixel.mihomo/`, and restarts
+the shell. Hot reload is unreliable; a restart is the sure way.
+
+```sh
+omarchy plugin validate .
+omarchy-shell io.github.lijiawei0305-pixel.mihomo open
+```

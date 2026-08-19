@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "io.github.leeyiwei0305.mihomo",
+  "id": "io.github.lijiawei0305-pixel.mihomo",
   "name": "Mihomo",
   "version": "0.3.0",
-  "author": "leeyiwei0305",
+  "author": "lijiawei0305-pixel",
   "license": "MIT",
   "description": "Control panel for the mihomo core: Home, Proxies, Config, Connections, Rules. Talks to the external controller directly; no GUI client required.",
   "kinds": [
