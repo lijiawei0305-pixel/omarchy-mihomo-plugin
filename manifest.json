@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.leeyiwei0305.mihomo",
+  "name": "Mihomo",
+  "version": "0.2.0",
+  "author": "leeyiwei0305",
+  "license": "MIT",
+  "description": "mihomo 内核控制面板：首页、代理、配置、连接、规则。直连 mihomo external controller，不依赖任何 GUI 客户端。",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "MihomoPanel.qml"
+  },
+  "barWidget": {
+    "displayName": "Mihomo",
+    "description": "mihomo 代理内核控制面板：节点切换、配置重载、连接与规则",
+    "category": "Network",
+    "defaultSection": "right",
+    "allowMultiple": false
+  }
+}

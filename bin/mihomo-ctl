@@ -1,0 +1,323 @@
+#!/usr/bin/env bash
+# mihomo-ctl — dependency-free client for the mihomo external controller.
+#
+# The panel never hardcodes an endpoint. Discovery runs on every invocation and
+# takes the first hit, so the same plugin works whether mihomo runs standalone
+# or under a supervisor (clash-verge, systemd unit, container):
+#
+#   1. ~/.config/omarchy-mihomo/config       explicit user override
+#   2. the running core's own flags          -ext-ctl / -ext-ctl-unix / -secret
+#   3. the yaml that core was started with   external-controller[-unix] / secret
+#   4. 127.0.0.1:9090 with no secret         mihomo's documented default
+#
+# Only curl is required. Paths passed in are used verbatim, so callers are
+# responsible for percent-encoding proxy/group names.
+
+set -u
+
+CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-mihomo/config"
+TIMEOUT="${MIHOMO_CTL_TIMEOUT:-8}"
+
+SOCKET=""
+ADDRESS=""
+SECRET=""
+SOURCE="default"
+CORE_FILE=""
+CORE_DIR=""
+
+trim() {
+  local value="$1"
+  value="${value%%#*}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  value="${value#\'}"; value="${value%\'}"
+  value="${value#\"}"; value="${value%\"}"
+  printf '%s' "$value"
+}
+
+# A bare `:9090` (or `0.0.0.0:9090`) binds every interface; talk to it over
+# loopback rather than handing curl a hostless authority.
+normalize_address() {
+  local addr
+  addr="$(trim "$1")"
+  [[ -z "$addr" ]] && return 0
+  case "$addr" in
+    :*) addr="127.0.0.1$addr" ;;
+    0.0.0.0:*) addr="127.0.0.1${addr#0.0.0.0}" ;;
+    "[::]:"*) addr="127.0.0.1:${addr##*:}" ;;
+  esac
+  printf '%s' "$addr"
+}
+
+# First top-level occurrence of `key:` in a yaml file. Deliberately shallow —
+# every key we want (external-controller, secret) is top-level in mihomo's
+# config, and a real yaml parser is not worth a dependency here.
+yaml_value() {
+  local file="$1" key="$2" line
+  [[ -r "$file" ]] || return 0
+  line="$(grep -m1 -E "^${key}:" "$file" 2>/dev/null)" || return 0
+  trim "${line#*:}"
+}
+
+load_override() {
+  [[ -r "$CONFIG_FILE" ]] || return 1
+  local key value
+  while IFS='=' read -r key value; do
+    key="$(trim "${key:-}")"
+    [[ -z "$key" || "$key" == \#* ]] && continue
+    value="$(trim "${value:-}")"
+    case "$key" in
+      socket) SOCKET="$value" ;;
+      endpoint|address) ADDRESS="$(normalize_address "$value")" ;;
+      secret) SECRET="$value" ;;
+    esac
+  done < "$CONFIG_FILE"
+  if [[ -n "$SOCKET" || -n "$ADDRESS" ]]; then
+    SOURCE="config:$CONFIG_FILE"
+    return 0
+  fi
+  return 1
+}
+
+core_pid() {
+  pgrep -x 'mihomo|mihomo-alpha|verge-mihomo|clash-meta|clash' 2>/dev/null | head -n1
+}
+
+load_from_core() {
+  local pid args arg next
+  pid="$(core_pid)"
+  [[ -n "$pid" && -r "/proc/$pid/cmdline" ]] || return 1
+
+  mapfile -t args < <(tr '\0' '\n' < "/proc/$pid/cmdline")
+
+  local i=0
+  while (( i < ${#args[@]} )); do
+    arg="${args[$i]}"
+    next="${args[$((i + 1))]:-}"
+    case "$arg" in
+      -ext-ctl-unix|--ext-ctl-unix)   SOCKET="$next" ;;
+      -ext-ctl|--ext-ctl)             ADDRESS="$(normalize_address "$next")" ;;
+      -secret|--secret)               SECRET="$next" ;;
+      -f|--config)                    CORE_FILE="$next" ;;
+      -d|--dir|--directory)           CORE_DIR="$next" ;;
+    esac
+    i=$((i + 1))
+  done
+
+  if [[ -n "$SOCKET" || -n "$ADDRESS" ]]; then
+    SOURCE="process:$pid"
+    # Flags win for the endpoint, but the secret usually still lives in the yaml.
+    [[ -z "$SECRET" && -n "$CORE_FILE" ]] && SECRET="$(yaml_value "$CORE_FILE" secret)"
+    [[ -z "$SECRET" && -n "$CORE_DIR" ]] && SECRET="$(yaml_value "$CORE_DIR/config.yaml" secret)"
+    return 0
+  fi
+
+  local candidate
+  for candidate in "$CORE_FILE" "$CORE_DIR/config.yaml"; do
+    [[ -n "$candidate" && -r "$candidate" ]] || continue
+    SOCKET="$(yaml_value "$candidate" external-controller-unix)"
+    ADDRESS="$(normalize_address "$(yaml_value "$candidate" external-controller)")"
+    [[ -z "$SECRET" ]] && SECRET="$(yaml_value "$candidate" secret)"
+    if [[ -n "$SOCKET" || -n "$ADDRESS" ]]; then
+      SOURCE="config:$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+# Path of the yaml the running core was started with. Independent of how we
+# talk to the API: -f wins, otherwise -d/config.yaml.
+core_config_path() {
+  if [[ -n "$CORE_FILE" ]]; then
+    printf '%s' "$CORE_FILE"
+    return 0
+  fi
+  if [[ -n "$CORE_DIR" ]]; then
+    printf '%s' "$CORE_DIR/config.yaml"
+    return 0
+  fi
+  return 1
+}
+
+# Nested `section.key` where section is a top-level map. Same shallow scan as
+# yaml_value — enough for dns.enable / tun.device, not a real parser.
+yaml_nested() {
+  local file="$1" section="$2" key="$3" in_section=0 line
+  [[ -r "$file" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$in_section" -eq 0 ]]; then
+      [[ "$line" == "${section}:" || "$line" == "${section}:"* ]] || continue
+      in_section=1
+      continue
+    fi
+    # Next top-level key ends the block.
+    if [[ "$line" != [[:space:]]* && "$line" != \#* && -n "$line" ]]; then
+      return 0
+    fi
+    line="${line#"${line%%[![:space:]]*}"}"
+    if [[ "$line" == "${key}:" || "$line" == "${key}:"* ]]; then
+      trim "${line#*:}"
+      return 0
+    fi
+  done < "$file"
+}
+
+resolve() {
+  # Always parse the running core first so CORE_FILE / CORE_DIR are set even
+  # when the user override wins for the API endpoint. configinfo / open-config
+  # need the yaml path independently of how we talk to the controller.
+  load_from_core || true
+  if load_override; then
+    return 0
+  fi
+  if [[ -n "$SOCKET" || -n "$ADDRESS" ]]; then
+    return 0
+  fi
+  ADDRESS="127.0.0.1:9090"
+  SOURCE="default"
+}
+
+base_url() {
+  if [[ -n "$SOCKET" ]]; then printf 'http://localhost'; else printf 'http://%s' "$ADDRESS"; fi
+}
+
+# Shared curl argv. `stream` drops --max-time and adds -N; everything else is a
+# bounded request/response.
+curl_args() {
+  local -n out="$1"
+  out=(--silent --show-error)
+  [[ -n "$SOCKET" ]] && out+=(--unix-socket "$SOCKET")
+  [[ -n "$SECRET" ]] && out+=(--header "Authorization: Bearer $SECRET")
+}
+
+request() {
+  local method="$1" path="$2" body="${3:-}"
+  local args
+  curl_args args
+  args+=(--max-time "$TIMEOUT" --request "$method")
+  if [[ -n "$body" ]]; then
+    args+=(--header "Content-Type: application/json" --data "$body")
+  fi
+  curl "${args[@]}" "$(base_url)$path"
+}
+
+# JSON-safe error envelope so the QML side always has something parseable.
+fail() {
+  printf '{"error":%s}\n' "$(json_string "$1")"
+  exit 1
+}
+
+json_string() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//	/\\t}"
+  s="${s//$'\n'/\\n}"
+  printf '"%s"' "$s"
+}
+
+# An empty body means the request never reached the core (socket gone, wrong
+# port, core restarting). Report it as null so callers can tell "no data" from
+# a legitimate JSON reply.
+or_null() {
+  local out="$1"
+  if [[ -z "$out" ]]; then printf 'null'; else printf '%s' "$out"; fi
+}
+
+resolve
+command="${1:-}"
+[[ $# -gt 0 ]] && shift
+
+case "$command" in
+  endpoint)
+    printf '{"transport":%s,"target":%s,"source":%s,"secret":%s}\n' \
+      "$([[ -n "$SOCKET" ]] && printf '"unix"' || printf '"tcp"')" \
+      "$(json_string "${SOCKET:-$ADDRESS}")" \
+      "$(json_string "$SOURCE")" \
+      "$([[ -n "$SECRET" ]] && printf 'true' || printf 'false')"
+    ;;
+
+  get)    request GET "${1:?path required}" ;;
+  delete) request DELETE "${1:?path required}" ;;
+  put)    request PUT "${1:?path required}" "${2:-}" ;;
+  patch)  request PATCH "${1:?path required}" "${2:-}" ;;
+  post)   request POST "${1:?path required}" "${2:-}" ;;
+
+  # Long-lived line-delimited JSON (/traffic, /memory). No timeout: the caller
+  # owns the process lifetime.
+  stream)
+    args=()
+    curl_args args
+    exec curl "${args[@]}" --no-buffer "$(base_url)${1:?path required}"
+    ;;
+
+  # One process, one poll: version + configs + proxies is everything the panel
+  # needs for the bar, the home page and the proxy page.
+  core)
+    version="$(request GET /version)"
+    if [[ -z "$version" ]]; then
+      fail "无法连接 mihomo (${SOURCE}: ${SOCKET:-$ADDRESS})"
+    fi
+    printf '{"version":%s,"configs":%s,"proxies":%s}\n' \
+      "$(or_null "$version")" \
+      "$(or_null "$(request GET /configs)")" \
+      "$(or_null "$(request GET /proxies)")"
+    ;;
+
+  providers)
+    printf '{"proxies":%s,"rules":%s}\n' \
+      "$(or_null "$(request GET /providers/proxies)")" \
+      "$(or_null "$(request GET /providers/rules)")"
+    ;;
+
+  # Path / size / mtime of the yaml the core is running, plus the few DNS
+  # keys /configs does not expose on 1.19.x. QML must not touch the filesystem.
+  configinfo)
+    path="$(core_config_path || true)"
+    if [[ -z "$path" ]]; then
+      fail "找不到内核配置文件路径"
+    fi
+    size=""
+    mtime=""
+    if [[ -e "$path" ]]; then
+      size="$(stat -c '%s' "$path" 2>/dev/null || true)"
+      mtime="$(stat -c '%Y' "$path" 2>/dev/null || true)"
+    fi
+    printf '{"path":%s,"size":%s,"mtime":%s,"dnsEnable":%s,"dnsListen":%s,"dnsMode":%s,"dnsFakeIp":%s}\n' \
+      "$(json_string "$path")" \
+      "${size:-null}" \
+      "${mtime:-null}" \
+      "$([[ "$(yaml_nested "$path" dns enable)" == "true" ]] && printf 'true' || printf 'false')" \
+      "$(json_string "$(yaml_nested "$path" dns listen)")" \
+      "$(json_string "$(yaml_nested "$path" dns enhanced-mode)")" \
+      "$(json_string "$(yaml_nested "$path" dns fake-ip-range)")"
+    ;;
+
+  open-config)
+    path="$(core_config_path || true)"
+    [[ -n "$path" ]] || fail "找不到内核配置文件路径"
+    launcher=""
+    if command -v omarchy-launch-config-editor >/dev/null; then
+      launcher="omarchy-launch-config-editor"
+    elif command -v omarchy-launch-editor >/dev/null; then
+      launcher="omarchy-launch-editor"
+    elif command -v xdg-open >/dev/null; then
+      launcher="xdg-open"
+    else
+      fail "找不到可用的编辑器启动器"
+    fi
+    # Must leave the panel's process group. Quickshell kills the group when
+    # this Process exits; xdg-open + nvim.desktop also cannot spawn a TTY
+    # from the bar, which is why the button looked like a no-op.
+    # `if ! cmd &` is always "failure" in bash — do not test a backgrounded job.
+    setsid "$launcher" "$path" >/dev/null 2>&1 &
+    printf '{"ok":true,"path":%s,"via":%s}\n' \
+      "$(json_string "$path")" "$(json_string "$launcher")"
+    ;;
+
+  *)
+    fail "unknown command: ${command:-<none>}"
+    ;;
+esac

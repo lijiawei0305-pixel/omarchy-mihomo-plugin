@@ -1,0 +1,10 @@
+*.png.bak
+*.qmlc
+*.jsc
+.qmlls.ini
+
+# Local notes — do not publish
+CHANGELOG.md
+DEVELOPING.md
+DEVELOPMENT.md
+MIGRATION-PROMPT.md

@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Push this repo to the live Omarchy plugin directory and reload the shell.
+#
+# The repo is the source of truth; the plugin directory is a deploy target.
+# Never edit the plugin directory directly — the next deploy overwrites it.
+
+set -euo pipefail
+
+PLUGIN_ID="$(sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' manifest.json | head -n1)"
+if [[ -z "$PLUGIN_ID" ]]; then
+  echo "deploy: could not read \"id\" from manifest.json" >&2
+  exit 1
+fi
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TARGET="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/$PLUGIN_ID"
+
+echo "==> validating manifest"
+omarchy plugin validate "$REPO"
+
+# qmllint needs the shell's QML modules mounted at `qs`, which is how Quickshell
+# exposes them at runtime. A throwaway symlink dir is the whole trick.
+if command -v /usr/lib/qt6/bin/qmllint >/dev/null; then
+  echo "==> linting QML"
+  LINT_DIR="$(mktemp -d)"
+  trap 'rm -rf "$LINT_DIR"' EXIT
+  ln -sfn /usr/share/omarchy/shell "$LINT_DIR/qs"
+  # Filtered to real problems: the shell's Style/Color singletons expose their
+  # members through inline QtObjects that qmllint cannot introspect, and
+  # Quickshell's Process.exited carries a type qmllint has no metadata for.
+  /usr/lib/qt6/bin/qmllint -I "$LINT_DIR" -I "$REPO" "$REPO"/*.qml 2>&1 \
+    | grep -E "^(Warning|Error)" \
+    | grep -viE 'unqualified|not found on type "QObject"|Set "pragma|is a member of a parent|QQuickItem|QProcess::ExitStatus' \
+    || true
+fi
+
+echo "==> syncing to $TARGET"
+mkdir -p "$TARGET"
+rsync -a --delete \
+  --exclude '.git/' \
+  --exclude 'deploy' \
+  --exclude 'CHANGELOG.md' \
+  --exclude 'DEVELOPING.md' \
+  --exclude 'DEVELOPMENT.md' \
+  --exclude 'MIGRATION-PROMPT.md' \
+  "$REPO"/ "$TARGET"/
+
+# Saving under ~/.config/omarchy/plugins/ is supposed to hot-reload, but the
+# shell keeps serving the cached QML often enough that verifying against a
+# stale panel wastes more time than the 5s restart costs.
+echo "==> restarting shell"
+omarchy restart shell
+
+echo "==> deployed $PLUGIN_ID"
+echo "    open it with: omarchy-shell $PLUGIN_ID open"
