@@ -63,7 +63,7 @@ secret = your-secret
 ## 安装
 
 ```bash
-git clone https://github.com/leeyiwei0305/omarchy-mihomo-plugin.git
+git clone https://github.com/lijiawei0305-pixel/omarchy-mihomo-plugin.git
 cd omarchy-mihomo-plugin
 ./deploy
 omarchy plugin enable io.github.leeyiwei0305.mihomo
