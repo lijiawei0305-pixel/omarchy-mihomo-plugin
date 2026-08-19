@@ -1,5 +1,7 @@
 # Mihomo
 
+![Mihomo control panel](preview.png)
+
 Omarchy bar plugin: a control panel for the mihomo core. Left nav rail plus a
 right-hand page, covering **Home / Proxies / Config / Connections / Rules**.
 
