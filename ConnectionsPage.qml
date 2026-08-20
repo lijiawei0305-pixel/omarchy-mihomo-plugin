@@ -173,7 +173,7 @@ Item {
 
         Text {
           width: parent.width
-          text: "󰁝 " + root.svc.fmtBytes(connRow.modelData.upload)
+          text: "󰁝 " + root.svc.fmtBytes(root.svc.connUpload(connRow.modelData.id))
           color: Util.alpha(root.fg, 0.7)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -183,7 +183,7 @@ Item {
 
         Text {
           width: parent.width
-          text: "󰁅 " + root.svc.fmtBytes(connRow.modelData.download)
+          text: "󰁅 " + root.svc.fmtBytes(root.svc.connDownload(connRow.modelData.id))
           color: Util.alpha(root.fg, 0.7)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption

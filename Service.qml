@@ -9,8 +9,9 @@ import Quickshell.Io
 // involved, so the panel keeps working after clash-verge is uninstalled.
 //
 // Polling is scoped to what is actually on screen: `active` follows the panel's
-// open state, `page` follows the visible tab. A closed panel costs one /version
-// + /configs + /proxies poll every 30s and nothing else.
+// open state, `page` follows the visible tab. A closed panel only hits
+// /version + /configs every 30s. The full /proxies payload is fetched while
+// Home or Proxies is visible, and after a write.
 Item {
   id: root
 
@@ -94,7 +95,12 @@ Item {
   property bool rulesLoading: false
 
   property var connections: []
+  property var connectionBytes: ({})
   property bool connectionsLoading: false
+  property string lastProxiesStamp: ""
+  property string lastConnIdent: ""
+  property string lastRulesRaw: ""
+  property string lastProvidersStamp: ""
 
   property string notice: ""
   property string language: "en"
@@ -127,15 +133,56 @@ Item {
     return encodeURIComponent(String(name || ""))
   }
 
+  function setIfChanged(name, value) {
+    if (root[name] !== value) root[name] = value
+  }
+
+  function sameStringList(a, b) {
+    if (a === b) return true
+    if (!a || !b || a.length !== b.length) return false
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return false
+    }
+    return true
+  }
+
+  // Only the fields the panel binds to. History and extra change on every
+  // probe and would otherwise force a full group-list rebuild every poll.
+  function proxyStamp(p) {
+    if (!p) return ""
+    var all = p.all
+    return String(p.now || "") + "\x1f" + String(p.type || "") + "\x1f"
+      + (p.hidden === true ? "1" : "0") + "\x1f" + (p.udp ? "1" : "0") + "\x1f"
+      + (all && all.length ? all.join("\x1e") : "")
+  }
+
+  function proxiesUiStamp(map, groups) {
+    var parts = []
+    var i
+    for (i = 0; i < groups.length; i++)
+      parts.push(groups[i] + "=" + proxyStamp(map[groups[i]]))
+    if (map && map["GLOBAL"] && groups.indexOf("GLOBAL") < 0)
+      parts.push("GLOBAL=" + proxyStamp(map["GLOBAL"]))
+    return parts.join("|")
+  }
+
+  function connUpload(id) {
+    var row = connectionBytes ? connectionBytes[id] : undefined
+    return row ? row.upload : 0
+  }
+
+  function connDownload(id) {
+    var row = connectionBytes ? connectionBytes[id] : undefined
+    return row ? row.download : 0
+  }
+
   function proxyFor(name) {
     var p = proxies ? proxies[name] : undefined
     return p === undefined ? null : p
   }
 
   function isGroup(name) {
-    var p = proxyFor(name)
-    if (!p) return false
-    return ["Selector", "URLTest", "Fallback", "LoadBalance", "Relay"].indexOf(p.type) >= 0
+    return isGroupName(proxies, name)
   }
 
   function nodesOf(group) {
@@ -196,8 +243,11 @@ Item {
 
   // --- reads ---------------------------------------------------------------
 
-  function refresh() {
+  function refresh(forceProxies) {
     if (!ready || coreProc.running) return
+    var needProxies = forceProxies === true
+      || (active && (page === "home" || page === "proxies"))
+    coreProc.command = ["/usr/bin/bash", runner, needProxies ? "core" : "status"]
     coreProc.running = true
   }
 
@@ -253,45 +303,42 @@ Item {
       return
     }
 
-    if (data.version) version = String(data.version.version || "")
+    if (data.version) setIfChanged("version", String(data.version.version || ""))
 
     var configs = data.configs
     if (configs) {
-      mode = String(configs.mode || "rule")
-      mixedPort = Number(configs["mixed-port"] || configs.port || 0)
-      allowLan = configs["allow-lan"] === true
-      ipv6 = configs.ipv6 === true
-      logLevel = String(configs["log-level"] || "")
-      unifiedDelay = configs["unified-delay"] === true
-      findProcessMode = String(configs["find-process-mode"] || "")
+      setIfChanged("mode", String(configs.mode || "rule"))
+      setIfChanged("mixedPort", Number(configs["mixed-port"] || configs.port || 0))
+      setIfChanged("allowLan", configs["allow-lan"] === true)
+      setIfChanged("ipv6", configs.ipv6 === true)
+      setIfChanged("logLevel", String(configs["log-level"] || ""))
+      setIfChanged("unifiedDelay", configs["unified-delay"] === true)
+      setIfChanged("findProcessMode", String(configs["find-process-mode"] || ""))
       var tun = configs.tun || {}
-      tunEnabled = tun.enable === true
-      tunStack = String(tun.stack || "")
-      tunDevice = String(tun.device || "")
-      tunAutoRoute = tun["auto-route"] === true
+      setIfChanged("tunEnabled", tun.enable === true)
+      setIfChanged("tunStack", String(tun.stack || ""))
+      setIfChanged("tunDevice", String(tun.device || ""))
+      setIfChanged("tunAutoRoute", tun["auto-route"] === true)
       var hijack = tun["dns-hijack"]
-      tunDnsHijack = hijack && hijack.length ? hijack.join(", ") : ""
-      sniffing = configs.sniffing === true
-      geodataMode = configs["geodata-mode"] === true
-      geoAutoUpdate = configs["geo-auto-update"] === true
-      socksPort = Number(configs["socks-port"] || 0)
-      redirPort = Number(configs["redir-port"] || 0)
-      tproxyPort = Number(configs["tproxy-port"] || 0)
-      httpPort = Number(configs.port || 0)
+      setIfChanged("tunDnsHijack", hijack && hijack.length ? hijack.join(", ") : "")
+      setIfChanged("sniffing", configs.sniffing === true)
+      setIfChanged("geodataMode", configs["geodata-mode"] === true)
+      setIfChanged("geoAutoUpdate", configs["geo-auto-update"] === true)
+      setIfChanged("socksPort", Number(configs["socks-port"] || 0))
+      setIfChanged("redirPort", Number(configs["redir-port"] || 0))
+      setIfChanged("tproxyPort", Number(configs["tproxy-port"] || 0))
+      setIfChanged("httpPort", Number(configs.port || 0))
     }
 
     if (data.proxies && data.proxies.proxies) {
-      proxies = data.proxies.proxies
-      // Fresh history from the core supersedes any locally cached probe result.
-      delays = ({})
-
-      var global = proxies["GLOBAL"]
+      var nextProxies = data.proxies.proxies
+      var global = nextProxies["GLOBAL"]
       var ordered = []
       var seen = {}
       if (global && global.all) {
         for (var i = 0; i < global.all.length; i++) {
           var name = global.all[i]
-          if (isGroup(name) && !seen[name]) {
+          if (isGroupName(nextProxies, name) && !seen[name]) {
             ordered.push(name)
             seen[name] = true
           }
@@ -299,12 +346,18 @@ Item {
       }
       // Anything the core exposes but GLOBAL does not list (hidden groups,
       // provider-backed groups) still belongs in the list.
-      for (var key in proxies) {
-        if (key === "GLOBAL" || seen[key] || !isGroup(key)) continue
+      for (var key in nextProxies) {
+        if (key === "GLOBAL" || seen[key] || !isGroupName(nextProxies, key)) continue
         ordered.push(key)
         seen[key] = true
       }
-      groupNames = ordered
+
+      var stamp = proxiesUiStamp(nextProxies, ordered)
+      if (stamp !== lastProxiesStamp) {
+        lastProxiesStamp = stamp
+        proxies = nextProxies
+        if (!sameStringList(groupNames, ordered)) groupNames = ordered
+      }
 
       var skipType = {
         Selector: true, URLTest: true, Fallback: true, LoadBalance: true, Relay: true,
@@ -312,15 +365,21 @@ Item {
         Compatible: true, Dns: true
       }
       var nodes = 0
-      for (var proxyName in proxies) {
-        var kind = String(proxies[proxyName].type || "")
+      for (var proxyName in nextProxies) {
+        var kind = String(nextProxies[proxyName].type || "")
         if (!skipType[kind]) nodes++
       }
-      nodeCount = nodes
+      setIfChanged("nodeCount", nodes)
     }
 
-    connected = true
-    lastError = ""
+    setIfChanged("connected", true)
+    setIfChanged("lastError", "")
+  }
+
+  function isGroupName(map, name) {
+    var p = map ? map[name] : undefined
+    if (!p) return false
+    return ["Selector", "URLTest", "Fallback", "LoadBalance", "Relay"].indexOf(p.type) >= 0
   }
 
   function applyProviders(raw) {
@@ -348,15 +407,25 @@ Item {
       })
     }
     ruleList.sort(function(a, b) { return a.name.localeCompare(b.name) })
+    var stamp = ""
+    for (var i = 0; i < ruleList.length; i++) {
+      var item = ruleList[i]
+      stamp += item.name + "\x1f" + item.behavior + "\x1f" + item.count + "\x1f" + item.updatedAt + "\x1e"
+    }
+    if (stamp === lastProvidersStamp) return
+    lastProvidersStamp = stamp
     ruleProviders = ruleList
   }
 
   function applyRules(raw) {
     rulesLoading = false
+    if (raw === lastRulesRaw) return
     try {
       var data = JSON.parse(raw)
-      rules = data.rules || []
-      ruleCount = rules.length
+      var next = data.rules || []
+      lastRulesRaw = raw
+      rules = next
+      setIfChanged("ruleCount", next.length)
     } catch (e) {
       // Leave the previous list in place rather than blanking the page.
     }
@@ -368,27 +437,40 @@ Item {
       var data = JSON.parse(raw)
       var list = data.connections || []
       var rows = []
+      var bytes = {}
+      var idents = []
       for (var i = 0; i < list.length; i++) {
         var c = list[i]
         var meta = c.metadata || {}
         var chains = c.chains || []
+        var id = String(c.id || "")
+        var host = String(meta.host || meta.destinationIP || "") + ":" + String(meta.destinationPort || "")
+        var process = String(meta.process || "")
+        var chain = chains.slice().reverse().join(" / ")
+        var rule = String(c.rule || "") + (c.rulePayload ? "(" + c.rulePayload + ")" : "")
+        bytes[id] = { upload: Number(c.upload || 0), download: Number(c.download || 0) }
+        idents.push(id + "\x1f" + host + "\x1f" + process + "\x1f" + chain + "\x1f" + rule)
         rows.push({
-          id: String(c.id || ""),
-          host: String(meta.host || meta.destinationIP || "") + ":" + String(meta.destinationPort || ""),
-          process: String(meta.process || ""),
+          id: id,
+          host: host,
+          process: process,
           network: String(meta.network || "").toUpperCase(),
           type: String(meta.type || ""),
-          upload: Number(c.upload || 0),
-          download: Number(c.download || 0),
           start: String(c.start || ""),
           // The core lists the chain innermost-first; read it the way the
           // request actually travels.
-          chain: chains.slice().reverse().join(" / "),
-          rule: String(c.rule || "") + (c.rulePayload ? "(" + c.rulePayload + ")" : "")
+          chain: chain,
+          rule: rule
         })
       }
       rows.sort(function(a, b) { return b.start.localeCompare(a.start) })
-      connections = rows
+      idents.sort()
+      var ident = idents.join("\x1e")
+      connectionBytes = bytes
+      if (ident !== lastConnIdent) {
+        lastConnIdent = ident
+        connections = rows
+      }
     } catch (e) {
       // Same as rules: a failed poll should not clear a good list.
     }
@@ -466,16 +548,16 @@ Item {
       return
     }
     if (data.error) {
-      lastError = String(data.error)
+      setIfChanged("lastError", String(data.error))
       return
     }
-    configPath = String(data.path || "")
-    configSize = Number(data.size || 0)
-    configMtime = Number(data.mtime || 0)
-    dnsEnabled = data.dnsEnable === true
-    dnsListen = String(data.dnsListen || "")
-    dnsMode = String(data.dnsMode || "")
-    dnsFakeIp = String(data.dnsFakeIp || "")
+    setIfChanged("configPath", String(data.path || ""))
+    setIfChanged("configSize", Number(data.size || 0))
+    setIfChanged("configMtime", Number(data.mtime || 0))
+    setIfChanged("dnsEnabled", data.dnsEnable === true)
+    setIfChanged("dnsListen", String(data.dnsListen || ""))
+    setIfChanged("dnsMode", String(data.dnsMode || ""))
+    setIfChanged("dnsFakeIp", String(data.dnsFakeIp || ""))
   }
 
   function actionErrorMessage(raw) {
@@ -582,7 +664,7 @@ Item {
     if (!ready) return
     endpointProc.running = true
     langProc.running = true
-    refresh()
+    refresh(true)
   }
 
   onActiveChanged: {
@@ -726,7 +808,7 @@ Item {
         root.notice = root.t("editorOpened")
       }
       root.runNextAction()
-      root.refresh()
+      root.refresh(true)
       if (root.page === "connections") root.refreshConnections()
       else if (root.page === "config" || kind === "reload") {
         root.refreshConfigInfo()
@@ -759,10 +841,10 @@ Item {
       onRead: function(line) {
         try {
           var data = JSON.parse(line)
-          root.upSpeed = Number(data.up || 0)
-          root.downSpeed = Number(data.down || 0)
-          if (data.upTotal !== undefined) root.upTotal = Number(data.upTotal)
-          if (data.downTotal !== undefined) root.downTotal = Number(data.downTotal)
+          root.setIfChanged("upSpeed", Number(data.up || 0))
+          root.setIfChanged("downSpeed", Number(data.down || 0))
+          if (data.upTotal !== undefined) root.setIfChanged("upTotal", Number(data.upTotal))
+          if (data.downTotal !== undefined) root.setIfChanged("downTotal", Number(data.downTotal))
         } catch (e) {
           // Partial line during core restart — the next tick recovers.
         }
@@ -778,7 +860,7 @@ Item {
       onRead: function(line) {
         try {
           var data = JSON.parse(line)
-          if (Number(data.inuse) > 0) root.memInuse = Number(data.inuse)
+          if (Number(data.inuse) > 0) root.setIfChanged("memInuse", Number(data.inuse))
         } catch (e) {
           // Same as traffic.
         }
@@ -802,7 +884,7 @@ Item {
       })
     }
 
-    function refresh(): void { root.refresh() }
+    function refresh(): void { root.refresh(true) }
     function mode(value: string): void { root.setMode(value) }
     function select(group: string, name: string): void { root.selectNode(group, name) }
     function reload(): void { root.reloadConfig() }

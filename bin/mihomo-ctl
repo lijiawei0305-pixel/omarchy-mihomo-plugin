@@ -245,6 +245,34 @@ or_null() {
   if [[ -z "$out" ]]; then printf 'null'; else printf '%s' "$out"; fi
 }
 
+fetch_bundle() {
+  local include_proxies="$1"
+  local dir version configs proxies
+  dir="$(mktemp -d)"
+  request GET /version >"$dir/version" &
+  request GET /configs >"$dir/configs" &
+  if [[ "$include_proxies" == 1 ]]; then
+    request GET /proxies >"$dir/proxies" &
+  fi
+  wait
+  version="$(cat "$dir/version")"
+  configs="$(cat "$dir/configs")"
+  if [[ "$include_proxies" == 1 ]]; then
+    proxies="$(cat "$dir/proxies")"
+  fi
+  rm -rf "$dir"
+  if [[ -z "$version" ]]; then
+    fail "cannot reach mihomo (${SOURCE}: ${SOCKET:-$ADDRESS})"
+  fi
+  if [[ "$include_proxies" == 1 ]]; then
+    printf '{"version":%s,"configs":%s,"proxies":%s}\n' \
+      "$(or_null "$version")" "$(or_null "$configs")" "$(or_null "$proxies")"
+  else
+    printf '{"version":%s,"configs":%s}\n' \
+      "$(or_null "$version")" "$(or_null "$configs")"
+  fi
+}
+
 resolve
 command="${1:-}"
 [[ $# -gt 0 ]] && shift
@@ -272,17 +300,16 @@ case "$command" in
     exec curl "${args[@]}" --no-buffer "$(base_url)${1:?path required}"
     ;;
 
-  # One process, one poll: version + configs + proxies is everything the panel
-  # needs for the bar, the home page and the proxy page.
+  # One process, one poll. `status` is the cheap heartbeat (bar + other pages).
+  # `core` also pulls /proxies, which is the large payload, and only when the
+  # Home or Proxies page is showing. The GETs run in parallel so a poll is one
+  # RTT, not three sequential curls.
+  status)
+    fetch_bundle 0
+    ;;
+
   core)
-    version="$(request GET /version)"
-    if [[ -z "$version" ]]; then
-      fail "cannot reach mihomo (${SOURCE}: ${SOCKET:-$ADDRESS})"
-    fi
-    printf '{"version":%s,"configs":%s,"proxies":%s}\n' \
-      "$(or_null "$version")" \
-      "$(or_null "$(request GET /configs)")" \
-      "$(or_null "$(request GET /proxies)")"
+    fetch_bundle 1
     ;;
 
   providers)
