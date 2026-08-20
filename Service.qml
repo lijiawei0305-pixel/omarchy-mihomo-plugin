@@ -99,8 +99,19 @@ Item {
   property bool connectionsLoading: false
   property string lastProxiesStamp: ""
   property string lastConnIdent: ""
+  property string lastConnBytesStamp: ""
   property string lastRulesRaw: ""
   property string lastProvidersStamp: ""
+
+  readonly property var skipNodeType: ({
+    Selector: true, URLTest: true, Fallback: true, LoadBalance: true, Relay: true,
+    Direct: true, Reject: true, RejectDrop: true, Pass: true, PassRule: true,
+    Compatible: true, Dns: true
+  })
+
+  readonly property int pollInterval: !active ? 30000
+    : (page === "home" || page === "proxies") ? 2000
+    : 5000
 
   property string notice: ""
   property string language: "en"
@@ -359,15 +370,10 @@ Item {
         if (!sameStringList(groupNames, ordered)) groupNames = ordered
       }
 
-      var skipType = {
-        Selector: true, URLTest: true, Fallback: true, LoadBalance: true, Relay: true,
-        Direct: true, Reject: true, RejectDrop: true, Pass: true, PassRule: true,
-        Compatible: true, Dns: true
-      }
       var nodes = 0
       for (var proxyName in nextProxies) {
         var kind = String(nextProxies[proxyName].type || "")
-        if (!skipType[kind]) nodes++
+        if (!skipNodeType[kind]) nodes++
       }
       setIfChanged("nodeCount", nodes)
     }
@@ -439,6 +445,7 @@ Item {
       var rows = []
       var bytes = {}
       var idents = []
+      var byteParts = []
       for (var i = 0; i < list.length; i++) {
         var c = list[i]
         var meta = c.metadata || {}
@@ -448,8 +455,11 @@ Item {
         var process = String(meta.process || "")
         var chain = chains.slice().reverse().join(" / ")
         var rule = String(c.rule || "") + (c.rulePayload ? "(" + c.rulePayload + ")" : "")
-        bytes[id] = { upload: Number(c.upload || 0), download: Number(c.download || 0) }
+        var upload = Number(c.upload || 0)
+        var download = Number(c.download || 0)
+        bytes[id] = { upload: upload, download: download }
         idents.push(id + "\x1f" + host + "\x1f" + process + "\x1f" + chain + "\x1f" + rule)
+        byteParts.push(id + "=" + upload + "," + download)
         rows.push({
           id: id,
           host: host,
@@ -465,8 +475,13 @@ Item {
       }
       rows.sort(function(a, b) { return b.start.localeCompare(a.start) })
       idents.sort()
+      byteParts.sort()
       var ident = idents.join("\x1e")
-      connectionBytes = bytes
+      var byteStamp = byteParts.join("\x1e")
+      if (byteStamp !== lastConnBytesStamp) {
+        lastConnBytesStamp = byteStamp
+        connectionBytes = bytes
+      }
       if (ident !== lastConnIdent) {
         lastConnIdent = ident
         connections = rows
@@ -679,7 +694,7 @@ Item {
   }
 
   Timer {
-    interval: root.active ? 2000 : 30000
+    interval: root.pollInterval
     running: root.ready
     repeat: true
     triggeredOnStart: true
@@ -687,7 +702,7 @@ Item {
   }
 
   Timer {
-    interval: 2000
+    interval: 3000
     running: root.ready && root.active && root.page === "connections"
     repeat: true
     triggeredOnStart: true

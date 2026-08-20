@@ -40,10 +40,8 @@ Item {
   }
 
   function scrollBy(delta) {
-    var flick = scrollArea.contentItem
-    if (!flick) return
-    flick.contentY = Math.max(0, Math.min(Math.max(0, flick.contentHeight - flick.height),
-                                          flick.contentY + delta))
+    listView.contentY = Math.max(0, Math.min(Math.max(0, listView.contentHeight - listView.height),
+                                             listView.contentY + delta))
   }
 
   PageHeader {
@@ -75,47 +73,46 @@ Item {
     color: Util.alpha(root.fg, 0.12)
   }
 
-  ScrollView {
-    id: scrollArea
+  ListView {
+    id: listView
     anchors.left: parent.left
     anchors.right: parent.right
     anchors.top: headerRule.bottom
     anchors.bottom: parent.bottom
     anchors.topMargin: Style.space(14)
     clip: true
-    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-    ScrollBar.vertical.policy: column.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+    spacing: Style.space(10)
+    model: root.visibleGroups
+    cacheBuffer: Style.space(280)
+    reuseItems: true
+    boundsBehavior: Flickable.StopAtBounds
 
-    Column {
-      id: column
-      width: scrollArea.availableWidth
-      spacing: Style.space(10)
-
-      Text {
-        width: parent.width
-        visible: root.visibleGroups.length === 0
-        text: root.svc && root.svc.connected
-          ? root.svc.t("noGroups")
-          : root.svc.t("notConnected")
-        color: Util.alpha(root.fg, 0.5)
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
-        wrapMode: Text.WordWrap
-        renderType: Text.NativeRendering
-      }
-
-      Repeater {
-        model: root.visibleGroups
-
-        GroupCard {
-          required property var modelData
-          width: column.width
-          groupName: modelData
-        }
-      }
-
-      Item { width: 1; height: Style.space(4) }
+    ScrollBar.vertical: ScrollBar {
+      policy: listView.contentHeight > listView.height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
     }
+
+    delegate: GroupCard {
+      required property var modelData
+      width: ListView.view.width
+      groupName: modelData
+    }
+
+    footer: Item { width: 1; height: Style.space(4) }
+  }
+
+  Text {
+    anchors.centerIn: listView
+    width: listView.width - Style.space(40)
+    visible: root.visibleGroups.length === 0
+    text: root.svc && root.svc.connected
+      ? root.svc.t("noGroups")
+      : root.svc.t("notConnected")
+    color: Util.alpha(root.fg, 0.5)
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.bodySmall
+    horizontalAlignment: Text.AlignHCenter
+    wrapMode: Text.WordWrap
+    renderType: Text.NativeRendering
   }
 
   component GroupCard: Card {
