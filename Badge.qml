@@ -23,6 +23,9 @@ Rectangle {
     id: label
     anchors.centerIn: parent
     text: root.text
+    // Controller names must stay literal. AutoText would treat <img src="...">
+    // as a resource load.
+    textFormat: Text.PlainText
     color: root.tint
     font.family: root.fontFamily
     font.pixelSize: root.fontSize

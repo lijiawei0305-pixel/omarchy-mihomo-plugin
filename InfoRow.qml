@@ -21,6 +21,7 @@ Item {
     anchors.left: parent.left
     anchors.verticalCenter: parent.verticalCenter
     text: root.label
+    textFormat: Text.PlainText
     color: Util.alpha(root.foreground, 0.55)
     font.family: root.fontFamily
     font.pixelSize: Style.font.bodySmall
@@ -34,6 +35,8 @@ Item {
     anchors.leftMargin: Style.space(10)
     anchors.verticalCenter: parent.verticalCenter
     text: root.value
+    // Values include controller fields (path, TUN device, DNS listen, …).
+    textFormat: Text.PlainText
     color: root.valueColor
     font.family: root.fontFamily
     font.pixelSize: Style.font.bodySmall

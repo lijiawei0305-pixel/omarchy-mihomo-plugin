@@ -136,6 +136,7 @@ Item {
         Text {
           width: parent.width
           text: connRow.modelData.host
+          textFormat: Text.PlainText
           color: root.fg
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
@@ -153,6 +154,7 @@ Item {
             if (connRow.modelData.rule !== "") parts.push(connRow.modelData.rule)
             return parts.join("  ·  ")
           }
+          textFormat: Text.PlainText
           color: Util.alpha(root.fg, 0.5)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption

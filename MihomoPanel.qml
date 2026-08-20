@@ -240,6 +240,7 @@ Panel {
                 width: parent.width
                 text: root.svc && root.svc.version !== "" ? root.svc.version
                   : (root.svc ? root.svc.t("offline") : "Offline")
+                textFormat: Text.PlainText
                 color: Util.alpha(root.fg, 0.45)
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
@@ -375,6 +376,7 @@ Panel {
             anchors.centerIn: parent
             width: Math.min(implicitWidth, pageHost.width - Style.space(24))
             text: root.svc ? root.svc.notice : ""
+            textFormat: Text.PlainText
             color: root.fg
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption

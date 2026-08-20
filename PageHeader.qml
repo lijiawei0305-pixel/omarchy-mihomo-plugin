@@ -26,6 +26,7 @@ Item {
     Text {
       width: parent.width
       text: root.title
+      textFormat: Text.PlainText
       color: root.foreground
       font.family: root.fontFamily
       font.pixelSize: Style.font.heading
@@ -38,6 +39,8 @@ Item {
       width: parent.width
       visible: root.subtitle !== ""
       text: root.subtitle
+      // Subtitles interpolate lastError, version, endpoint, and config path.
+      textFormat: Text.PlainText
       color: Util.alpha(root.foreground, 0.5)
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption

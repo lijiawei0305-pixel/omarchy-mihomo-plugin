@@ -149,6 +149,7 @@ Item {
         Text {
           width: parent.width
           text: card.groupName
+          textFormat: Text.PlainText
           color: root.fg
           font.family: root.fontFamily
           font.pixelSize: Style.font.subtitle
@@ -170,6 +171,7 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             width: Math.max(0, titleColumn.width - Style.space(90))
             text: card.currentNode
+            textFormat: Text.PlainText
             color: Util.alpha(root.fg, 0.62)
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
@@ -314,6 +316,7 @@ Item {
       anchors.rightMargin: Style.space(10)
       anchors.verticalCenter: parent.verticalCenter
       text: nodeRow.nodeName
+      textFormat: Text.PlainText
       color: nodeRow.selected ? Color.accent : Util.alpha(root.fg, 0.85)
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall

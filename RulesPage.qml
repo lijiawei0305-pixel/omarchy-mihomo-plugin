@@ -154,6 +154,7 @@ Item {
         Text {
           width: parent.width
           text: String(ruleRow.modelData.payload || "")
+          textFormat: Text.PlainText
           color: root.fg
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
@@ -164,6 +165,7 @@ Item {
         Text {
           width: parent.width
           text: String(ruleRow.modelData.type || "")
+          textFormat: Text.PlainText
           color: Util.alpha(root.fg, 0.45)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -179,6 +181,7 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         width: Style.space(120)
         text: String(ruleRow.modelData.proxy || "")
+        textFormat: Text.PlainText
         color: root.targetColor(String(ruleRow.modelData.proxy || ""))
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption

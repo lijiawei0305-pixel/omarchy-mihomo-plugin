@@ -144,6 +144,7 @@ Item {
             Text {
               width: parent.width
               text: root.leafNode !== "" ? root.leafNode : (root.svc ? root.svc.t("noNode") : "No node available")
+              textFormat: Text.PlainText
               color: root.fg
               font.family: root.fontFamily
               font.pixelSize: Style.font.subtitle
@@ -161,6 +162,7 @@ Item {
                   ? type + udp + "  ←  " + root.chain.slice(0, -1).join(" / ")
                   : type + udp
               }
+              textFormat: Text.PlainText
               color: Util.alpha(root.fg, 0.5)
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
@@ -226,6 +228,7 @@ Item {
           width: parent.width
           visible: root.groupProxy !== null && String(root.groupProxy.type) !== "Selector"
           text: root.svc ? root.svc.t("autoSelectHint", root.groupProxy ? root.groupProxy.type : "") : ""
+          textFormat: Text.PlainText
           color: Util.alpha(root.fg, 0.5)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
