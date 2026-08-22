@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import qs.Ui
 import qs.Commons
 
 // Plugin-owned single-select dropdown.
