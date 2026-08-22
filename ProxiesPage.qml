@@ -107,6 +107,7 @@ Item {
     text: root.svc && root.svc.connected
       ? root.svc.t("noGroups")
       : root.svc.t("notConnected")
+    textFormat: Text.PlainText
     color: Util.alpha(root.fg, 0.5)
     font.family: root.fontFamily
     font.pixelSize: Style.font.bodySmall
@@ -246,6 +247,7 @@ Item {
         width: parent.width
         visible: !card.selectable
         text: groupTypeHint(card.groupType)
+        textFormat: Text.PlainText
         color: Util.alpha(root.fg, 0.45)
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption

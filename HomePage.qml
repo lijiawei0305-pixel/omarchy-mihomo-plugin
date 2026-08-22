@@ -200,7 +200,7 @@ Item {
           }
         }
 
-        Dropdown {
+        PlainTextDropdown {
           width: parent.width
           label: root.svc ? root.svc.t("proxyGroup") : "Proxy group"
           foreground: root.fg
@@ -210,13 +210,12 @@ Item {
           onChanged: function(v) { root.selectedGroup = v }
         }
 
-        Dropdown {
+        PlainTextDropdown {
           width: parent.width
           label: root.svc ? root.svc.t("node") : "Node"
           foreground: root.fg
           fontFamily: root.fontFamily
           enabled: root.groupProxy !== null && String(root.groupProxy.type) === "Selector"
-          opacity: enabled ? 1.0 : 0.55
           options: root.svc && root.activeGroup !== "" ? root.svc.nodesOf(root.activeGroup) : []
           value: root.groupNow
           onChanged: function(v) {
@@ -300,6 +299,7 @@ Item {
         Text {
           width: parent.width
           text: root.svc ? root.svc.t("networkSettingsHint") : ""
+          textFormat: Text.PlainText
           color: Util.alpha(root.fg, 0.42)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -334,6 +334,7 @@ Item {
             : root.svc && root.svc.mode === "direct"
               ? root.svc.t("modeDirectHint")
               : (root.svc ? root.svc.t("modeRuleHint") : "")
+          textFormat: Text.PlainText
           color: Util.alpha(root.fg, 0.5)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -424,6 +425,7 @@ Item {
       Text {
         width: parent.width
         text: cell.value
+        textFormat: Text.PlainText
         color: cell.foreground
         font.family: cell.fontFamily
         font.pixelSize: Style.font.subtitle
@@ -436,6 +438,7 @@ Item {
       Text {
         width: parent.width
         text: cell.glyph + " " + cell.caption
+        textFormat: Text.PlainText
         color: Util.alpha(cell.foreground, 0.5)
         font.family: cell.fontFamily
         font.pixelSize: Style.font.caption

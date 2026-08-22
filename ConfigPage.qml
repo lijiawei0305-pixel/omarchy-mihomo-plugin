@@ -114,6 +114,7 @@ Item {
         Text {
           width: parent.width
           text: root.svc ? root.svc.t("languageHint") : ""
+          textFormat: Text.PlainText
           color: Util.alpha(root.fg, 0.45)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -189,6 +190,7 @@ Item {
         Text {
           width: parent.width
           text: root.svc ? root.svc.t("reloadHint") : ""
+          textFormat: Text.PlainText
           color: Util.alpha(root.fg, 0.45)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption

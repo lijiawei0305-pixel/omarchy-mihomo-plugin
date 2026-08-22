@@ -174,6 +174,7 @@ Item {
         Text {
           width: parent.width
           text: "󰁝 " + root.svc.fmtBytes(root.svc.connUpload(connRow.modelData.id))
+          textFormat: Text.PlainText
           color: Util.alpha(root.fg, 0.7)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -184,6 +185,7 @@ Item {
         Text {
           width: parent.width
           text: "󰁅 " + root.svc.fmtBytes(root.svc.connDownload(connRow.modelData.id))
+          textFormat: Text.PlainText
           color: Util.alpha(root.fg, 0.7)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -214,6 +216,7 @@ Item {
     text: root.svc && !root.svc.connected ? root.svc.t("notConnected")
       : root.filter !== "" ? (root.svc ? root.svc.t("noMatchConnections") : "")
       : (root.svc ? root.svc.t("noActiveConnections") : "")
+    textFormat: Text.PlainText
     color: Util.alpha(root.fg, 0.45)
     font.family: root.fontFamily
     font.pixelSize: Style.font.bodySmall

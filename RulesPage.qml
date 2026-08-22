@@ -136,6 +136,7 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         width: Style.space(34)
         text: String(ruleRow.modelData.index !== undefined ? ruleRow.modelData.index + 1 : ruleRow.index + 1)
+        textFormat: Text.PlainText
         color: Util.alpha(root.fg, 0.35)
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
@@ -201,6 +202,7 @@ Item {
       : root.svc && !root.svc.connected ? root.svc.t("notConnected")
       : root.filter !== "" ? root.svc.t("noMatchRules")
       : (root.svc ? root.svc.t("noRules") : "")
+    textFormat: Text.PlainText
     color: Util.alpha(root.fg, 0.45)
     font.family: root.fontFamily
     font.pixelSize: Style.font.bodySmall

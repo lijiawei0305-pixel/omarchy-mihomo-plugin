@@ -99,8 +99,10 @@ Panel {
     labelVisible: false
     hasVisualContent: true
     horizontalMargin: 5
+    // Bar.qml paints tooltipText with AutoText. Keep this string to plugin
+    // labels and numeric speeds — never the controller version.
     tooltipText: root.svc && root.svc.connected
-      ? ("mihomo " + root.svc.version + " · " + root.svc.modeLabel
+      ? ("mihomo · " + root.modeLabel
          + "\n↑ " + root.svc.fmtSpeed(root.svc.upSpeed) + "  ↓ " + root.svc.fmtSpeed(root.svc.downSpeed))
       : (root.svc ? root.svc.t("barDisconnected") : "mihomo · disconnected")
     fixedWidth: vertical ? -1 : barContent.implicitWidth + Style.spaceReal(10)
@@ -125,6 +127,7 @@ Panel {
       Text {
         anchors.verticalCenter: parent.verticalCenter
         text: root.connected ? root.modeLabel : "--"
+        textFormat: Text.PlainText
         color: button.foreground
         font.family: button.fontFamily
         font.pixelSize: Style.font.bodySmall
@@ -227,6 +230,7 @@ Panel {
               Text {
                 width: parent.width
                 text: "MIHOMO"
+                textFormat: Text.PlainText
                 color: root.fg
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -461,6 +465,7 @@ Panel {
       anchors.rightMargin: Style.space(6)
       anchors.verticalCenter: parent.verticalCenter
       text: nav.title
+      textFormat: Text.PlainText
       color: nav.selected ? Color.accent : Util.alpha(root.fg, 0.85)
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall
@@ -495,6 +500,7 @@ Panel {
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
       text: stat.value
+      textFormat: Text.PlainText
       color: Util.alpha(root.fg, 0.7)
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
