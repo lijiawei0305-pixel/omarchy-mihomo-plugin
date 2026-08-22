@@ -274,6 +274,141 @@ Item {
         }
       }
 
+      // --- 如何接到内核 ----------------------------------------------------
+
+      Card {
+        width: parent.width
+        foreground: root.fg
+
+        PanelSectionHeader {
+          text: root.svc ? root.svc.t("connectTitle") : "Link this plugin to your core"
+          foreground: root.fg
+          fontFamily: root.fontFamily
+        }
+
+        Text {
+          width: parent.width
+          text: root.svc ? root.svc.t("connectIntro") : ""
+          textFormat: Text.PlainText
+          color: Util.alpha(root.fg, 0.55)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+          lineHeight: 1.25
+          renderType: Text.NativeRendering
+        }
+
+        Text {
+          width: parent.width
+          text: root.svc ? root.svc.t("connectYaml") : ""
+          textFormat: Text.PlainText
+          color: Util.alpha(root.fg, 0.55)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+          lineHeight: 1.25
+          renderType: Text.NativeRendering
+        }
+
+        Text {
+          width: parent.width
+          text: root.svc ? root.svc.t("connectYamlExample") : "external-controller: 127.0.0.1:9090"
+          textFormat: Text.PlainText
+          color: root.fg
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WrapAnywhere
+          renderType: Text.NativeRendering
+        }
+
+        Text {
+          width: parent.width
+          text: root.svc ? root.svc.t("connectSecret") : ""
+          textFormat: Text.PlainText
+          color: Util.alpha(root.fg, 0.55)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+          lineHeight: 1.25
+          renderType: Text.NativeRendering
+        }
+
+        Text {
+          width: parent.width
+          text: root.svc ? root.svc.t("connectDiscover") : ""
+          textFormat: Text.PlainText
+          color: Util.alpha(root.fg, 0.55)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+          lineHeight: 1.25
+          renderType: Text.NativeRendering
+        }
+
+        InfoRow {
+          width: parent.width
+          label: root.svc ? root.svc.t("connectOverride") : "Override file"
+          value: root.svc ? root.svc.t("connectOverridePath") : "~/.config/omarchy-mihomo/config"
+          foreground: root.fg
+          fontFamily: root.fontFamily
+        }
+
+        Text {
+          width: parent.width
+          text: root.svc ? root.svc.t("connectOverrideHint") : ""
+          textFormat: Text.PlainText
+          color: Util.alpha(root.fg, 0.45)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WrapAnywhere
+          lineHeight: 1.25
+          renderType: Text.NativeRendering
+        }
+
+        InfoRow {
+          width: parent.width
+          label: root.svc ? root.svc.t("connectLiveApi") : "API now"
+          value: {
+            if (!root.svc || !root.svc.connected) return "--"
+            var transport = root.svc.endpointTransport !== "" ? root.svc.endpointTransport : "tcp"
+            var target = root.svc.endpointTarget !== "" ? root.svc.endpointTarget : "127.0.0.1:9090"
+            return transport + " · " + target
+          }
+          foreground: root.fg
+          fontFamily: root.fontFamily
+          valueBold: true
+        }
+
+        InfoRow {
+          width: parent.width
+          label: root.svc ? root.svc.t("connectLiveConfig") : "Core yaml"
+          value: root.svc && root.svc.configPath !== "" ? root.svc.configPath : "--"
+          foreground: root.fg
+          fontFamily: root.fontFamily
+        }
+
+        InfoRow {
+          width: parent.width
+          label: root.svc ? root.svc.t("connectLiveMixed") : "Mixed port"
+          value: root.svc && root.svc.mixedPort > 0 ? String(root.svc.mixedPort) : "--"
+          foreground: root.fg
+          fontFamily: root.fontFamily
+          valueBold: true
+        }
+
+        Text {
+          width: parent.width
+          text: root.svc ? root.svc.t("connectApps") : ""
+          textFormat: Text.PlainText
+          color: Util.alpha(root.fg, 0.42)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+          lineHeight: 1.25
+          renderType: Text.NativeRendering
+        }
+      }
+
       // --- 网络设置 --------------------------------------------------------
 
       Card {
