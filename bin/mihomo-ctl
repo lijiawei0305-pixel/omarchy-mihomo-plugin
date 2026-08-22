@@ -255,10 +255,34 @@ sysproxy_clear_gsettings() {
   return 0
 }
 
+ENV_DROPIN="${XDG_CONFIG_HOME:-$HOME/.config}/environment.d/99-mihomo-proxy.conf"
+
+sysproxy_write_dropin() {
+  local host="$1" port="$2"
+  local http="http://${host}:${port}"
+  local socks="socks5://${host}:${port}"
+  mkdir -p "$(dirname "$ENV_DROPIN")"
+  cat >"$ENV_DROPIN" <<EOF
+http_proxy=${http}
+https_proxy=${http}
+HTTP_PROXY=${http}
+HTTPS_PROXY=${http}
+ALL_PROXY=${socks}
+all_proxy=${socks}
+NO_PROXY=${DEFAULT_BYPASS}
+no_proxy=${DEFAULT_BYPASS}
+EOF
+}
+
+sysproxy_remove_dropin() {
+  rm -f "$ENV_DROPIN"
+}
+
 sysproxy_set_env() {
   local host="$1" port="$2"
   local http="http://${host}:${port}"
   local socks="socks5://${host}:${port}"
+  sysproxy_write_dropin "$host" "$port"
   systemctl --user set-environment \
     "http_proxy=${http}" "https_proxy=${http}" \
     "HTTP_PROXY=${http}" "HTTPS_PROXY=${http}" \
@@ -276,15 +300,15 @@ sysproxy_set_env() {
 }
 
 sysproxy_clear_env() {
-  systemctl --user unset-environment \
-    http_proxy https_proxy HTTP_PROXY HTTPS_PROXY \
-    all_proxy ALL_PROXY no_proxy NO_PROXY >/dev/null 2>&1 || return 1
+  # Drop-in must go first: environment.d re-fills the manager after an
+  # unset. And unset-environment itself does not stick on this host —
+  # empty set-environment does.
+  sysproxy_remove_dropin
+  systemctl --user set-environment \
+    http_proxy= https_proxy= HTTP_PROXY= HTTPS_PROXY= \
+    all_proxy= ALL_PROXY= no_proxy= NO_PROXY= \
+    >/dev/null 2>&1 || return 1
   unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
-  if command -v dbus-update-activation-environment >/dev/null 2>&1; then
-    dbus-update-activation-environment --systemd \
-      http_proxy https_proxy HTTP_PROXY HTTPS_PROXY \
-      all_proxy ALL_PROXY no_proxy NO_PROXY >/dev/null 2>&1 || true
-  fi
   return 0
 }
 
@@ -294,6 +318,7 @@ sysproxy_read_env() {
     case "$line" in
       HTTP_PROXY=*|http_proxy=*)
         url="${line#*=}"
+        [[ -z "$url" ]] && continue
         url="${url#*://}"
         SYSPROXY_ENV_HOST="${url%%:*}"
         SYSPROXY_ENV_PORT="${url##*:}"
