@@ -264,6 +264,7 @@ Item {
             if (root.svc.sysproxyEnabled) return root.svc.t("captureSysproxyHint")
             return root.svc.t("captureOffHint")
           }
+          textFormat: Text.PlainText
           color: Util.alpha(root.fg, 0.5)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
