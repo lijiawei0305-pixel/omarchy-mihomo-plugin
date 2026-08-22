@@ -2,9 +2,9 @@ import QtQuick
 import qs.Ui
 import qs.Commons
 
-// System proxy / TUN / Off. Mutually exclusive: Clash Verge can toggle both,
-// but running them together double-captures traffic. Writes go through the
-// service so the OS proxy and PATCH /configs stay ordered.
+// System proxy and TUN are independent toggles. Clicking one must not
+// change the other — the old exclusive mode turned TUN off when the user
+// only wanted to clear the desktop proxy. Off still clears both.
 Row {
   id: root
 
@@ -26,10 +26,7 @@ Row {
     bordered: true
     active: root.sysOn
     enabled: root.svc !== null && root.svc.connected
-    onClicked: {
-      if (root.sysOn && !root.tunOn) root.svc.setCaptureMode("off")
-      else root.svc.setCaptureMode("sysproxy")
-    }
+    onClicked: root.svc.setSysproxy(!root.sysOn)
   }
 
   Button {
@@ -41,10 +38,7 @@ Row {
     bordered: true
     active: root.tunOn
     enabled: root.svc !== null && root.svc.connected
-    onClicked: {
-      if (root.tunOn && !root.sysOn) root.svc.setCaptureMode("off")
-      else root.svc.setCaptureMode("tun")
-    }
+    onClicked: root.svc.setTun(!root.tunOn)
   }
 
   Button {

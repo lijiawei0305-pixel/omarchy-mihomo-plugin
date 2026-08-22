@@ -61,6 +61,7 @@ Item {
   property int sysproxyPort: 0
   property string sysproxyBackend: ""
   property bool sysproxyWanted: false
+  property bool sysproxyWritePending: false
   property bool mixedPortSeen: false
   property bool unifiedDelay: false
   property string findProcessMode: ""
@@ -403,7 +404,7 @@ Item {
   }
 
   function applySysproxy(data) {
-    if (!data) return
+    if (!data || sysproxyWritePending) return
     setIfChanged("sysproxyEnabled", data.enabled === true)
     setIfChanged("sysproxyHost", String(data.host || ""))
     setIfChanged("sysproxyPort", Number(data.port || 0))
@@ -419,8 +420,9 @@ Item {
       if (port > 0) mixedPortSeen = true
       return
     }
-    if (!sysproxyEnabled || port <= 0 || port === sysproxyPort) return
-    enqueue(["sysproxy", "on", "127.0.0.1", String(port)], "")
+    if (sysproxyWritePending || !sysproxyWanted || !sysproxyEnabled) return
+    if (port <= 0 || port === sysproxyPort) return
+    enqueue(["sysproxy", "on", "127.0.0.1", String(port)], "", "sysproxy")
   }
 
   function isGroupName(map, name) {
@@ -580,15 +582,12 @@ Item {
     enqueue(["patch", "/configs", JSON.stringify({ mode: value })], t("modeTo", modeLabel))
   }
 
-  // System proxy and TUN are exclusive on this panel: running both double-
-  // captures traffic the way Clash Verge warns against. Off clears both.
+  // Off clears both. The Home buttons toggle each path on its own.
   function setCaptureMode(modeName) {
     if (!ready) return
     if (modeName === "sysproxy") {
-      if (tunEnabled) setTun(false)
       setSysproxy(true)
     } else if (modeName === "tun") {
-      if (sysproxyEnabled) setSysproxy(false)
       setTun(true)
     } else {
       if (sysproxyEnabled) setSysproxy(false)
@@ -605,10 +604,14 @@ Item {
         return
       }
       sysproxyEnabled = true
-      enqueue(["sysproxy", "on", "127.0.0.1", String(port)], t("sysproxyOn"))
+      sysproxyWanted = true
+      sysproxyWritePending = true
+      enqueue(["sysproxy", "on", "127.0.0.1", String(port)], t("sysproxyOn"), "sysproxy")
     } else {
       sysproxyEnabled = false
-      enqueue(["sysproxy", "off"], t("sysproxyOff"))
+      sysproxyWanted = false
+      sysproxyWritePending = true
+      enqueue(["sysproxy", "off"], t("sysproxyOff"), "sysproxy")
     }
   }
 
@@ -904,6 +907,7 @@ Item {
       var err = root.actionErrorMessage(actionOut.text)
       var kind = actionProc.actionKind
       root.configReloading = false
+      if (kind === "sysproxy") root.sysproxyWritePending = false
       if (exitCode !== 0 || err !== "") {
         root.notice = err !== "" ? err : root.t("actionFailed")
       } else if (kind === "reload") {
