@@ -298,76 +298,34 @@ Item {
           renderType: Text.NativeRendering
         }
 
-        Text {
+        Rectangle {
           width: parent.width
-          text: root.svc ? root.svc.t("connectYaml") : ""
-          textFormat: Text.PlainText
-          color: Util.alpha(root.fg, 0.55)
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          wrapMode: Text.WordWrap
-          lineHeight: 1.25
-          renderType: Text.NativeRendering
-        }
+          implicitHeight: yamlExample.implicitHeight + Style.space(12)
+          radius: Style.cornerRadius
+          color: Util.alpha(root.fg, 0.05)
+          border.width: 1
+          border.color: Util.alpha(root.fg, 0.12)
 
-        Text {
-          width: parent.width
-          text: root.svc ? root.svc.t("connectYamlExample") : "external-controller: 127.0.0.1:9090"
-          textFormat: Text.PlainText
-          color: root.fg
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          wrapMode: Text.WrapAnywhere
-          renderType: Text.NativeRendering
-        }
-
-        Text {
-          width: parent.width
-          text: root.svc ? root.svc.t("connectSecret") : ""
-          textFormat: Text.PlainText
-          color: Util.alpha(root.fg, 0.55)
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          wrapMode: Text.WordWrap
-          lineHeight: 1.25
-          renderType: Text.NativeRendering
-        }
-
-        Text {
-          width: parent.width
-          text: root.svc ? root.svc.t("connectDiscover") : ""
-          textFormat: Text.PlainText
-          color: Util.alpha(root.fg, 0.55)
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          wrapMode: Text.WordWrap
-          lineHeight: 1.25
-          renderType: Text.NativeRendering
+          Text {
+            id: yamlExample
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.leftMargin: Style.space(10)
+            anchors.rightMargin: Style.space(10)
+            text: root.svc ? root.svc.t("connectYamlExample") : "external-controller: 127.0.0.1:9090"
+            textFormat: Text.PlainText
+            color: root.fg
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            elide: Text.ElideRight
+            renderType: Text.NativeRendering
+          }
         }
 
         InfoRow {
           width: parent.width
-          label: root.svc ? root.svc.t("connectOverride") : "Override file"
-          value: root.svc ? root.svc.t("connectOverridePath") : "~/.config/omarchy-mihomo/config"
-          foreground: root.fg
-          fontFamily: root.fontFamily
-        }
-
-        Text {
-          width: parent.width
-          text: root.svc ? root.svc.t("connectOverrideHint") : ""
-          textFormat: Text.PlainText
-          color: Util.alpha(root.fg, 0.45)
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          wrapMode: Text.WrapAnywhere
-          lineHeight: 1.25
-          renderType: Text.NativeRendering
-        }
-
-        InfoRow {
-          width: parent.width
-          label: root.svc ? root.svc.t("connectLiveApi") : "API now"
+          label: root.svc ? root.svc.t("connectLiveApi") : "API"
           value: {
             if (!root.svc || !root.svc.connected) return "--"
             var transport = root.svc.endpointTransport !== "" ? root.svc.endpointTransport : "tcp"
@@ -381,7 +339,7 @@ Item {
 
         InfoRow {
           width: parent.width
-          label: root.svc ? root.svc.t("connectLiveConfig") : "Core yaml"
+          label: root.svc ? root.svc.t("connectLiveConfig") : "Yaml"
           value: root.svc && root.svc.configPath !== "" ? root.svc.configPath : "--"
           foreground: root.fg
           fontFamily: root.fontFamily
@@ -396,9 +354,17 @@ Item {
           valueBold: true
         }
 
+        InfoRow {
+          width: parent.width
+          label: root.svc ? root.svc.t("connectOverride") : "Override"
+          value: root.svc ? root.svc.t("connectOverridePath") : "~/.config/omarchy-mihomo/config"
+          foreground: root.fg
+          fontFamily: root.fontFamily
+        }
+
         Text {
           width: parent.width
-          text: root.svc ? root.svc.t("connectApps") : ""
+          text: root.svc ? root.svc.t("connectHint") : ""
           textFormat: Text.PlainText
           color: Util.alpha(root.fg, 0.42)
           font.family: root.fontFamily
