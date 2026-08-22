@@ -165,22 +165,198 @@ yaml_nested() {
   done < "$file"
 }
 
-read_language() {
-  local lang="en" key value
-  if [[ -r "$UI_FILE" ]]; then
-    while IFS='=' read -r key value; do
-      key="$(trim "${key:-}")"
-      [[ -z "$key" || "$key" == \#* ]] && continue
-      value="$(trim "${value:-}")"
-      if [[ "$key" == language ]]; then
-        lang="$value"
-      fi
-    done < "$UI_FILE"
-  fi
-  case "$lang" in
-    zh|zh_CN|zh-CN|zh_Hans) printf 'zh' ;;
-    *) printf 'en' ;;
+# UI file is a small key=value store. language is the original key;
+# sysproxy records whether the user asked this plugin to own the OS proxy.
+UI_LANGUAGE="en"
+UI_SYSPROXY="off"
+
+load_ui() {
+  UI_LANGUAGE="en"
+  UI_SYSPROXY="off"
+  [[ -r "$UI_FILE" ]] || return 0
+  local key value
+  while IFS='=' read -r key value; do
+    key="$(trim "${key:-}")"
+    [[ -z "$key" || "$key" == \#* ]] && continue
+    value="$(trim "${value:-}")"
+    case "$key" in
+      language) UI_LANGUAGE="$value" ;;
+      sysproxy) UI_SYSPROXY="$value" ;;
+    esac
+  done < "$UI_FILE"
+  case "$UI_LANGUAGE" in
+    zh|zh_CN|zh-CN|zh_Hans) UI_LANGUAGE="zh" ;;
+    *) UI_LANGUAGE="en" ;;
   esac
+  case "$UI_SYSPROXY" in
+    on|true|1|yes) UI_SYSPROXY="on" ;;
+    *) UI_SYSPROXY="off" ;;
+  esac
+}
+
+save_ui() {
+  mkdir -p "$(dirname "$UI_FILE")"
+  printf 'language = %s\nsysproxy = %s\n' "$UI_LANGUAGE" "$UI_SYSPROXY" > "$UI_FILE"
+}
+
+read_language() {
+  load_ui
+  printf '%s' "$UI_LANGUAGE"
+}
+
+# Clash Verge Rev's Linux default bypass (sysopt.rs DEFAULT_BYPASS).
+# https://github.com/clash-verge-rev/clash-verge-rev
+DEFAULT_BYPASS="localhost,127.0.0.1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,::1"
+DEFAULT_BYPASS_GVARIANT="['localhost', '127.0.0.1', '192.168.0.0/16', '10.0.0.0/8', '172.16.0.0/12', '::1']"
+
+unquote_gsettings() {
+  local s="$1"
+  s="${s#\'}"; s="${s%\'}"
+  s="${s#\"}"; s="${s%\"}"
+  printf '%s' "$s"
+}
+
+gsettings_available() {
+  command -v gsettings >/dev/null 2>&1 \
+    && gsettings get org.gnome.system.proxy mode >/dev/null 2>&1
+}
+
+dconf_write() {
+  command -v dconf >/dev/null 2>&1 || return 0
+  dconf write "$1" "$2" >/dev/null 2>&1 || true
+}
+
+# Same backends Clash Verge uses on Linux: gsettings + dconf. Hyprland /
+# Omarchy also honours the systemd user environment, so we write that too.
+sysproxy_set_gsettings() {
+  local host="$1" port="$2"
+  gsettings set org.gnome.system.proxy.http host "$host" || return 1
+  gsettings set org.gnome.system.proxy.http port "$port" || return 1
+  gsettings set org.gnome.system.proxy.https host "$host" || return 1
+  gsettings set org.gnome.system.proxy.https port "$port" || return 1
+  gsettings set org.gnome.system.proxy.socks host "$host" || return 1
+  gsettings set org.gnome.system.proxy.socks port "$port" || return 1
+  gsettings set org.gnome.system.proxy ignore-hosts "$DEFAULT_BYPASS_GVARIANT" || return 1
+  gsettings set org.gnome.system.proxy mode "'manual'" || return 1
+  dconf_write /system/proxy/http/host "'${host}'"
+  dconf_write /system/proxy/http/port "$port"
+  dconf_write /system/proxy/https/host "'${host}'"
+  dconf_write /system/proxy/https/port "$port"
+  dconf_write /system/proxy/socks/host "'${host}'"
+  dconf_write /system/proxy/socks/port "$port"
+  dconf_write /system/proxy/ignore-hosts "$DEFAULT_BYPASS_GVARIANT"
+  dconf_write /system/proxy/mode "'manual'"
+  return 0
+}
+
+sysproxy_clear_gsettings() {
+  gsettings set org.gnome.system.proxy mode "'none'" || return 1
+  dconf_write /system/proxy/mode "'none'"
+  return 0
+}
+
+sysproxy_set_env() {
+  local host="$1" port="$2"
+  local http="http://${host}:${port}"
+  local socks="socks5://${host}:${port}"
+  systemctl --user set-environment \
+    "http_proxy=${http}" "https_proxy=${http}" \
+    "HTTP_PROXY=${http}" "HTTPS_PROXY=${http}" \
+    "all_proxy=${socks}" "ALL_PROXY=${socks}" \
+    "no_proxy=${DEFAULT_BYPASS}" "NO_PROXY=${DEFAULT_BYPASS}" \
+    >/dev/null 2>&1 || return 1
+  export http_proxy="$http" https_proxy="$http" HTTP_PROXY="$http" HTTPS_PROXY="$http"
+  export all_proxy="$socks" ALL_PROXY="$socks" no_proxy="$DEFAULT_BYPASS" NO_PROXY="$DEFAULT_BYPASS"
+  if command -v dbus-update-activation-environment >/dev/null 2>&1; then
+    dbus-update-activation-environment --systemd \
+      http_proxy https_proxy HTTP_PROXY HTTPS_PROXY \
+      all_proxy ALL_PROXY no_proxy NO_PROXY >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+
+sysproxy_clear_env() {
+  systemctl --user unset-environment \
+    http_proxy https_proxy HTTP_PROXY HTTPS_PROXY \
+    all_proxy ALL_PROXY no_proxy NO_PROXY >/dev/null 2>&1 || return 1
+  unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
+  if command -v dbus-update-activation-environment >/dev/null 2>&1; then
+    dbus-update-activation-environment --systemd \
+      http_proxy https_proxy HTTP_PROXY HTTPS_PROXY \
+      all_proxy ALL_PROXY no_proxy NO_PROXY >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+
+sysproxy_read_env() {
+  local line url
+  while IFS= read -r line; do
+    case "$line" in
+      HTTP_PROXY=*|http_proxy=*)
+        url="${line#*=}"
+        url="${url#*://}"
+        SYSPROXY_ENV_HOST="${url%%:*}"
+        SYSPROXY_ENV_PORT="${url##*:}"
+        [[ -n "$SYSPROXY_ENV_HOST" && "$SYSPROXY_ENV_PORT" =~ ^[1-9][0-9]*$ ]] && return 0
+        ;;
+    esac
+  done < <(systemctl --user show-environment 2>/dev/null)
+  return 1
+}
+
+sysproxy_status_json() {
+  local enabled=false host="" port=0 backend="none"
+  if gsettings_available; then
+    local mode
+    mode="$(unquote_gsettings "$(gsettings get org.gnome.system.proxy mode 2>/dev/null)")"
+    if [[ "$mode" == "manual" ]]; then
+      host="$(unquote_gsettings "$(gsettings get org.gnome.system.proxy.http host 2>/dev/null)")"
+      port="$(gsettings get org.gnome.system.proxy.http port 2>/dev/null)"
+      [[ "$port" =~ ^[0-9]+$ ]] || port=0
+      enabled=true
+      backend="gsettings"
+    fi
+  fi
+  if [[ "$enabled" != true ]] && sysproxy_read_env; then
+    host="$SYSPROXY_ENV_HOST"
+    port="$SYSPROXY_ENV_PORT"
+    enabled=true
+    backend="env"
+  fi
+  load_ui
+  printf '{"enabled":%s,"host":%s,"port":%s,"backend":%s,"wanted":%s}' \
+    "$enabled" \
+    "$(json_string "$host")" \
+    "${port:-0}" \
+    "$(json_string "$backend")" \
+    "$([[ "$UI_SYSPROXY" == on ]] && printf 'true' || printf 'false')"
+}
+
+sysproxy_apply() {
+  local host="$1" port="$2"
+  local ok=0
+  if gsettings_available && sysproxy_set_gsettings "$host" "$port"; then
+    ok=1
+  fi
+  if sysproxy_set_env "$host" "$port"; then
+    ok=1
+  fi
+  [[ "$ok" -eq 1 ]] || fail "failed to apply system proxy (gsettings / env)"
+  load_ui
+  UI_SYSPROXY="on"
+  save_ui
+  printf '{"ok":true,"host":%s,"port":%s}\n' "$(json_string "$host")" "$port"
+}
+
+sysproxy_clear() {
+  if gsettings_available; then
+    sysproxy_clear_gsettings || true
+  fi
+  sysproxy_clear_env || true
+  load_ui
+  UI_SYSPROXY="off"
+  save_ui
+  printf '{"ok":true}\n'
 }
 
 resolve() {
@@ -264,12 +440,14 @@ fetch_bundle() {
   if [[ -z "$version" ]]; then
     fail "cannot reach mihomo (${SOURCE}: ${SOCKET:-$ADDRESS})"
   fi
+  local sysproxy
+  sysproxy="$(sysproxy_status_json)"
   if [[ "$include_proxies" == 1 ]]; then
-    printf '{"version":%s,"configs":%s,"proxies":%s}\n' \
-      "$(or_null "$version")" "$(or_null "$configs")" "$(or_null "$proxies")"
+    printf '{"version":%s,"configs":%s,"proxies":%s,"sysproxy":%s}\n' \
+      "$(or_null "$version")" "$(or_null "$configs")" "$(or_null "$proxies")" "$sysproxy"
   else
-    printf '{"version":%s,"configs":%s}\n' \
-      "$(or_null "$version")" "$(or_null "$configs")"
+    printf '{"version":%s,"configs":%s,"sysproxy":%s}\n' \
+      "$(or_null "$version")" "$(or_null "$configs")" "$sysproxy"
   fi
 }
 
@@ -373,9 +551,35 @@ case "$command" in
       en|zh) ;;
       *) fail "language must be en or zh" ;;
     esac
-    mkdir -p "$(dirname "$UI_FILE")"
-    printf 'language = %s\n' "$lang" > "$UI_FILE"
+    load_ui
+    UI_LANGUAGE="$lang"
+    save_ui
     printf '{"language":%s}\n' "$(json_string "$lang")"
+    ;;
+
+  # System proxy: same Linux backends as Clash Verge Rev (gsettings + dconf),
+  # plus the systemd user environment Hyprland / Omarchy apps actually read.
+  # https://github.com/clash-verge-rev/clash-verge-rev
+  sysproxy)
+    action="${1:-status}"
+    case "$action" in
+      status)
+        printf '%s\n' "$(sysproxy_status_json)"
+        ;;
+      on)
+        host="${2:-127.0.0.1}"
+        port="${3:-}"
+        [[ -n "$host" ]] || fail "sysproxy host required"
+        [[ "$port" =~ ^[1-9][0-9]*$ && "$port" -le 65535 ]] || fail "sysproxy port required"
+        sysproxy_apply "$host" "$port"
+        ;;
+      off)
+        sysproxy_clear
+        ;;
+      *)
+        fail "sysproxy action must be status, on, or off"
+        ;;
+    esac
     ;;
 
   *)

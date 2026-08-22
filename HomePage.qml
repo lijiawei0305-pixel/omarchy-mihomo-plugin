@@ -237,6 +237,43 @@ Item {
         }
       }
 
+      // --- 流量接管：系统代理 / TUN ----------------------------------------
+
+      Card {
+        width: parent.width
+        foreground: root.fg
+
+        PanelSectionHeader {
+          text: root.svc ? root.svc.t("captureTitle") : "Traffic capture"
+          foreground: root.fg
+          fontFamily: root.fontFamily
+        }
+
+        CaptureSwitch {
+          svc: root.svc
+          foreground: root.fg
+          fontFamily: root.fontFamily
+        }
+
+        Text {
+          width: parent.width
+          text: {
+            if (!root.svc) return ""
+            if (root.svc.tunEnabled && root.svc.sysproxyEnabled)
+              return root.svc.t("captureBothHint")
+            if (root.svc.tunEnabled) return root.svc.t("captureTunHint")
+            if (root.svc.sysproxyEnabled) return root.svc.t("captureSysproxyHint")
+            return root.svc.t("captureOffHint")
+          }
+          color: Util.alpha(root.fg, 0.5)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+          lineHeight: 1.25
+          renderType: Text.NativeRendering
+        }
+      }
+
       // --- 网络设置 --------------------------------------------------------
 
       Card {
@@ -254,6 +291,18 @@ Item {
           label: root.svc ? root.svc.t("mixedPort") : "Mixed port"
           value: root.svc && root.svc.mixedPort > 0 ? String(root.svc.mixedPort)
             : (root.svc ? root.svc.t("notEnabled") : "Off")
+          foreground: root.fg
+          fontFamily: root.fontFamily
+          valueBold: true
+        }
+
+        InfoRow {
+          width: parent.width
+          label: root.svc ? root.svc.t("sysproxy") : "System proxy"
+          value: root.svc && root.svc.sysproxyEnabled
+            ? root.svc.t("sysproxyOnValue", root.svc.sysproxyHost, root.svc.sysproxyPort)
+            : (root.svc ? root.svc.t("disabled") : "Off")
+          valueColor: root.svc && root.svc.sysproxyEnabled ? Color.accent : Util.alpha(root.fg, 0.75)
           foreground: root.fg
           fontFamily: root.fontFamily
           valueBold: true
