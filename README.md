@@ -41,12 +41,13 @@ if you want it gone.
 
 The plugin does not install mihomo and does not write your yaml. It can switch
 **system proxy** (desktop + session environment) and **TUN** from the Home page.
+Those two toggles are independent: turning one off does not change the other.
 
 ## Pages
 
 | Page | What it shows | APIs |
 |------|----------------|------|
-| Home | Current node, system proxy / TUN capture, network overview, proxy mode, traffic | `/version` `/configs` `/proxies` `/traffic` `/memory` plus OS proxy |
+| Home | Current node, system proxy / TUN capture, how to link the core, network overview, proxy mode, traffic | `/version` `/configs` `/proxies` `/traffic` `/memory` plus OS proxy |
 | Proxies | Proxy groups, expand nodes, switch, group or single-node latency tests | `/proxies` `/proxies/{name}` `/group/{name}/delay` |
 | Config | Hand-written yaml path / stats, reload the core, open the editor; rule providers can be refreshed | `configinfo` `PUT /configs` `/providers/rules` |
 | Connections | Active connections, up/down, chain and matched rule; filter, close one, close all | `/connections` |
@@ -73,7 +74,20 @@ sysproxy = off
 Use `zh` for Chinese. `sysproxy = on` means this plugin last turned the OS
 proxy on, so a mixed-port change can rewrite it.
 
-## Endpoint discovery
+## Link the core
+
+The panel does not start mihomo. Run your own core, then expose its API.
+
+In the core yaml:
+
+```yaml
+external-controller: 127.0.0.1:9090
+# secret: your-secret
+```
+
+**9090** (or whatever you set as `external-controller`) is only for this panel.
+Apps use **mixed-port** or TUN. Home shows the live API, yaml path, and mixed
+port, plus a one-line yaml example.
 
 The panel never hardcodes an address. Every `bin/mihomo-ctl` call probes in
 order and uses the first hit:
@@ -86,7 +100,8 @@ order and uses the first hit:
 So it finds the core whether it listens on a TCP port or a Unix socket, with or
 without a secret.
 
-To pin the endpoint yourself, create `~/.config/omarchy-mihomo/config`:
+If the port or secret is not the default, create
+`~/.config/omarchy-mihomo/config`:
 
 ```
 endpoint = 127.0.0.1:9090
@@ -95,7 +110,7 @@ endpoint = 127.0.0.1:9090
 secret = your-secret
 ```
 
-Check what was resolved:
+The yaml `secret:` and this file must match. Check what was resolved:
 
 ```sh
 ~/.config/omarchy/plugins/io.github.lijiawei0305-pixel.mihomo/bin/mihomo-ctl endpoint
@@ -118,9 +133,9 @@ node's latency.
 
 ## Notes
 
-- On Home, pick **System proxy** or **TUN** (or Off). They are exclusive: TUN
-  captures everything, system proxy only the apps that honour it. Ports, LAN
-  and IPv6 stay read-only; edit the yaml and reload for those.
+- On Home, **System proxy** and **TUN** toggle on their own. Off clears both.
+  TUN captures everything; system proxy only the apps that honour it. Ports,
+  LAN and IPv6 stay read-only; edit the yaml and reload for those.
 - System proxy points HTTP/HTTPS/SOCKS at the mixed port (or HTTP / SOCKS if
   mixed is off) and bypasses `localhost`, `127.0.0.1`, RFC1918 ranges and
   `::1`, matching Clash Verge's Linux default.
