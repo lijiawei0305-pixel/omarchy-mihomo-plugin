@@ -677,6 +677,7 @@ Item {
   // --- lifecycle -----------------------------------------------------------
 
   Component.onCompleted: {
+    ServiceStore.instance = root
     if (ready) {
       endpointProc.running = true
       langProc.running = true
