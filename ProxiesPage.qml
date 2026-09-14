@@ -17,14 +17,14 @@ Item {
   // GLOBAL only matters in global mode; in rule mode it is noise.
   readonly property var visibleGroups: {
     var out = []
-    if (!svc) return out
+    if (!svc || !svc.groupNames) return out
     var names = svc.groupNames
     for (var i = 0; i < names.length; i++) {
-      var proxy = svc.proxyFor(names[i])
+      var proxy = svc.proxyFor ? svc.proxyFor(names[i]) : null
       if (proxy && proxy.hidden === true) continue
       out.push(names[i])
     }
-    if (svc.mode === "global" && svc.proxyFor("GLOBAL")) out.unshift("GLOBAL")
+    if (svc.mode === "global" && svc.proxyFor && svc.proxyFor("GLOBAL")) out.unshift("GLOBAL")
     return out
   }
 
@@ -106,7 +106,7 @@ Item {
     visible: root.visibleGroups.length === 0
     text: root.svc && root.svc.connected
       ? root.svc.t("noGroups")
-      : root.svc.t("notConnected")
+      : (root.svc ? root.svc.t("notConnected") : "")
     color: Util.alpha(root.fg, 0.5)
     font.family: root.fontFamily
     font.pixelSize: Style.font.bodySmall

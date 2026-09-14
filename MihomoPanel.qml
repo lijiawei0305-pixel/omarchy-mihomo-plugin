@@ -16,7 +16,26 @@ Panel {
   ipcTarget: "io.github.lijiawei0305-pixel.mihomo"
   manageIpc: false
 
-  readonly property var svc: bar?.shell?.serviceFor(root.moduleName)
+  property var svc: null
+
+  function resolveService() {
+    if (!svc && bar && bar.shell && typeof bar.shell.serviceFor === "function") {
+      var s = bar.shell.serviceFor(root.moduleName)
+      if (s) {
+        svc = s
+      }
+    }
+  }
+
+  onBarChanged: resolveService()
+  Component.onCompleted: resolveService()
+
+  Timer {
+    interval: 500
+    running: root.svc === null
+    repeat: true
+    onTriggered: root.resolveService()
+  }
 
   readonly property color fg: bar ? bar.foreground : Color.popups.text
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
@@ -69,15 +88,25 @@ Panel {
   IpcHandler {
     target: root.ipcTarget
 
-    function open(): void { root.open() }
+    function open(): void {
+      if (!root.svc) root.resolveService()
+      root.open()
+    }
     function close(): void { root.close() }
-    function show(): void { root.open() }
+    function show(): void {
+      if (!root.svc) root.resolveService()
+      root.open()
+    }
     function hide(): void { root.close() }
-    function toggle(): void { root.toggle() }
+    function toggle(): void {
+      if (!root.svc) root.resolveService()
+      root.toggle()
+    }
 
     function page(name: string): void { root.goto(name) }
 
     function state(): string {
+      if (!root.svc) root.resolveService()
       if (!root.svc) return "{}"
       return JSON.stringify({
         connected: root.svc.connected,
