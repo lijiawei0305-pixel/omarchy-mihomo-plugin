@@ -53,6 +53,17 @@ Item {
   property string tunDevice: ""
   property bool tunAutoRoute: false
   property string tunDnsHijack: ""
+  property bool tunAutoDetect: false
+
+  // OS-level system proxy. Not a core setting — Clash Verge keeps this on the
+  // GUI side and writes gsettings / the session environment itself.
+  property bool sysproxyEnabled: false
+  property string sysproxyHost: ""
+  property int sysproxyPort: 0
+  property string sysproxyBackend: ""
+  property bool sysproxyWanted: false
+  property bool sysproxyWritePending: false
+  property bool mixedPortSeen: false
   property bool unifiedDelay: false
   property string findProcessMode: ""
   property bool sniffing: false
@@ -121,6 +132,12 @@ Item {
     id: i18n
     language: root.language
   }
+
+  readonly property int proxyListenPort: mixedPort > 0 ? mixedPort
+    : (httpPort > 0 ? httpPort : socksPort)
+
+  readonly property string captureMode: tunEnabled ? "tun"
+    : (sysproxyEnabled ? "sysproxy" : "off")
 
   readonly property string modeLabel: t(mode === "global" ? "modeGlobal"
     : mode === "direct" ? "modeDirect"
@@ -331,6 +348,7 @@ Item {
       setIfChanged("tunStack", String(tun.stack || ""))
       setIfChanged("tunDevice", String(tun.device || ""))
       setIfChanged("tunAutoRoute", tun["auto-route"] === true)
+      setIfChanged("tunAutoDetect", tun["auto-detect-interface"] === true)
       var hijack = tun["dns-hijack"]
       setIfChanged("tunDnsHijack", hijack && hijack.length ? hijack.join(", ") : "")
       setIfChanged("sniffing", configs.sniffing === true)
@@ -379,8 +397,33 @@ Item {
       setIfChanged("nodeCount", nodes)
     }
 
+    if (data.sysproxy) applySysproxy(data.sysproxy)
+
     setIfChanged("connected", true)
     setIfChanged("lastError", "")
+    maybeRefreshSysproxyPort()
+  }
+
+  function applySysproxy(data) {
+    if (!data || sysproxyWritePending) return
+    setIfChanged("sysproxyEnabled", data.enabled === true)
+    setIfChanged("sysproxyHost", String(data.host || ""))
+    setIfChanged("sysproxyPort", Number(data.port || 0))
+    setIfChanged("sysproxyBackend", String(data.backend || ""))
+    setIfChanged("sysproxyWanted", data.wanted === true)
+  }
+
+  // Clash Verge rewrites the OS proxy when mixed-port changes while system
+  // proxy is on. Skip the first poll so we do not surprise an existing session.
+  function maybeRefreshSysproxyPort() {
+    var port = proxyListenPort
+    if (!mixedPortSeen) {
+      if (port > 0) mixedPortSeen = true
+      return
+    }
+    if (sysproxyWritePending || !sysproxyWanted || !sysproxyEnabled) return
+    if (port <= 0 || port === sysproxyPort) return
+    enqueue(["sysproxy", "on", "127.0.0.1", String(port)], "", "sysproxy")
   }
 
   function isGroupName(map, name) {
@@ -538,6 +581,55 @@ Item {
     if (!ready || ["rule", "global", "direct"].indexOf(value) < 0) return
     mode = value
     enqueue(["patch", "/configs", JSON.stringify({ mode: value })], t("modeTo", modeLabel))
+  }
+
+  // Off clears both. The Home buttons toggle each path on its own.
+  function setCaptureMode(modeName) {
+    if (!ready) return
+    if (modeName === "sysproxy") {
+      setSysproxy(true)
+    } else if (modeName === "tun") {
+      setTun(true)
+    } else {
+      if (sysproxyEnabled) setSysproxy(false)
+      if (tunEnabled) setTun(false)
+    }
+  }
+
+  function setSysproxy(enabled) {
+    if (!ready) return
+    if (enabled) {
+      var port = proxyListenPort
+      if (port <= 0) {
+        notice = t("sysproxyNoPort")
+        return
+      }
+      sysproxyEnabled = true
+      sysproxyWanted = true
+      sysproxyWritePending = true
+      enqueue(["sysproxy", "on", "127.0.0.1", String(port)], t("sysproxyOn"), "sysproxy")
+    } else {
+      sysproxyEnabled = false
+      sysproxyWanted = false
+      sysproxyWritePending = true
+      enqueue(["sysproxy", "off"], t("sysproxyOff"), "sysproxy")
+    }
+  }
+
+  function setTun(enabled) {
+    if (!ready) return
+    tunEnabled = enabled
+    var tun = {
+      enable: enabled,
+      "auto-route": true,
+      "auto-detect-interface": true
+    }
+    tun.stack = tunStack !== "" ? tunStack : "mixed"
+    if (tunDevice !== "") tun.device = tunDevice
+    if (tunDnsHijack !== "") tun["dns-hijack"] = tunDnsHijack.split(", ")
+    else tun["dns-hijack"] = ["any:53"]
+    enqueue(["patch", "/configs", JSON.stringify({ tun: tun })],
+            enabled ? t("tunOnNotice") : t("tunOffNotice"))
   }
 
   function closeConnection(id) {
@@ -825,6 +917,7 @@ Item {
       var err = root.actionErrorMessage(actionOut.text)
       var kind = actionProc.actionKind
       root.configReloading = false
+      if (kind === "sysproxy") root.sysproxyWritePending = false
       if (exitCode !== 0 || err !== "") {
         root.notice = err !== "" ? err : root.t("actionFailed")
       } else if (kind === "reload") {
@@ -901,6 +994,9 @@ Item {
         connected: root.connected,
         version: root.version,
         mode: root.mode,
+        capture: root.captureMode,
+        sysproxy: root.sysproxyEnabled,
+        tun: root.tunEnabled,
         endpoint: root.endpointTarget,
         transport: root.endpointTransport,
         groups: root.groupNames,
@@ -911,6 +1007,7 @@ Item {
 
     function refresh(): void { root.refresh(true) }
     function mode(value: string): void { root.setMode(value) }
+    function capture(mode: string): void { root.setCaptureMode(mode) }
     function select(group: string, name: string): void { root.selectNode(group, name) }
     function reload(): void { root.reloadConfig() }
   }

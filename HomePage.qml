@@ -200,7 +200,7 @@ Item {
           }
         }
 
-        Dropdown {
+        PlainTextDropdown {
           width: parent.width
           label: root.svc ? root.svc.t("proxyGroup") : "Proxy group"
           foreground: root.fg
@@ -210,13 +210,12 @@ Item {
           onChanged: function(v) { root.selectedGroup = v }
         }
 
-        Dropdown {
+        PlainTextDropdown {
           width: parent.width
           label: root.svc ? root.svc.t("node") : "Node"
           foreground: root.fg
           fontFamily: root.fontFamily
           enabled: root.groupProxy !== null && String(root.groupProxy.type) === "Selector"
-          opacity: enabled ? 1.0 : 0.55
           options: root.svc && root.activeGroup !== "" ? root.svc.nodesOf(root.activeGroup) : []
           value: root.groupNow
           onChanged: function(v) {
@@ -233,6 +232,145 @@ Item {
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
           wrapMode: Text.WordWrap
+          renderType: Text.NativeRendering
+        }
+      }
+
+      // --- 流量接管：系统代理 / TUN ----------------------------------------
+
+      Card {
+        width: parent.width
+        foreground: root.fg
+
+        PanelSectionHeader {
+          text: root.svc ? root.svc.t("captureTitle") : "Traffic capture"
+          foreground: root.fg
+          fontFamily: root.fontFamily
+        }
+
+        CaptureSwitch {
+          svc: root.svc
+          foreground: root.fg
+          fontFamily: root.fontFamily
+        }
+
+        Text {
+          width: parent.width
+          text: {
+            if (!root.svc) return ""
+            if (root.svc.tunEnabled && root.svc.sysproxyEnabled)
+              return root.svc.t("captureBothHint")
+            if (root.svc.tunEnabled) return root.svc.t("captureTunHint")
+            if (root.svc.sysproxyEnabled) return root.svc.t("captureSysproxyHint")
+            return root.svc.t("captureOffHint")
+          }
+          textFormat: Text.PlainText
+          color: Util.alpha(root.fg, 0.5)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+          lineHeight: 1.25
+          renderType: Text.NativeRendering
+        }
+      }
+
+      // --- 如何接到内核 ----------------------------------------------------
+
+      Card {
+        width: parent.width
+        foreground: root.fg
+
+        PanelSectionHeader {
+          text: root.svc ? root.svc.t("connectTitle") : "Link this plugin to your core"
+          foreground: root.fg
+          fontFamily: root.fontFamily
+        }
+
+        Text {
+          width: parent.width
+          text: root.svc ? root.svc.t("connectIntro") : ""
+          textFormat: Text.PlainText
+          color: Util.alpha(root.fg, 0.55)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+          lineHeight: 1.25
+          renderType: Text.NativeRendering
+        }
+
+        Rectangle {
+          width: parent.width
+          implicitHeight: yamlExample.implicitHeight + Style.space(12)
+          radius: Style.cornerRadius
+          color: Util.alpha(root.fg, 0.05)
+          border.width: 1
+          border.color: Util.alpha(root.fg, 0.12)
+
+          Text {
+            id: yamlExample
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.leftMargin: Style.space(10)
+            anchors.rightMargin: Style.space(10)
+            text: root.svc ? root.svc.t("connectYamlExample") : "external-controller: 127.0.0.1:9090"
+            textFormat: Text.PlainText
+            color: root.fg
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            elide: Text.ElideRight
+            renderType: Text.NativeRendering
+          }
+        }
+
+        InfoRow {
+          width: parent.width
+          label: root.svc ? root.svc.t("connectLiveApi") : "API"
+          value: {
+            if (!root.svc || !root.svc.connected) return "--"
+            var transport = root.svc.endpointTransport !== "" ? root.svc.endpointTransport : "tcp"
+            var target = root.svc.endpointTarget !== "" ? root.svc.endpointTarget : "127.0.0.1:9090"
+            return transport + " · " + target
+          }
+          foreground: root.fg
+          fontFamily: root.fontFamily
+          valueBold: true
+        }
+
+        InfoRow {
+          width: parent.width
+          label: root.svc ? root.svc.t("connectLiveConfig") : "Yaml"
+          value: root.svc && root.svc.configPath !== "" ? root.svc.configPath : "--"
+          foreground: root.fg
+          fontFamily: root.fontFamily
+        }
+
+        InfoRow {
+          width: parent.width
+          label: root.svc ? root.svc.t("connectLiveMixed") : "Mixed port"
+          value: root.svc && root.svc.mixedPort > 0 ? String(root.svc.mixedPort) : "--"
+          foreground: root.fg
+          fontFamily: root.fontFamily
+          valueBold: true
+        }
+
+        InfoRow {
+          width: parent.width
+          label: root.svc ? root.svc.t("connectOverride") : "Override"
+          value: root.svc ? root.svc.t("connectOverridePath") : "~/.config/omarchy-mihomo/config"
+          foreground: root.fg
+          fontFamily: root.fontFamily
+        }
+
+        Text {
+          width: parent.width
+          text: root.svc ? root.svc.t("connectHint") : ""
+          textFormat: Text.PlainText
+          color: Util.alpha(root.fg, 0.42)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          wrapMode: Text.WordWrap
+          lineHeight: 1.25
           renderType: Text.NativeRendering
         }
       }
@@ -254,6 +392,18 @@ Item {
           label: root.svc ? root.svc.t("mixedPort") : "Mixed port"
           value: root.svc && root.svc.mixedPort > 0 ? String(root.svc.mixedPort)
             : (root.svc ? root.svc.t("notEnabled") : "Off")
+          foreground: root.fg
+          fontFamily: root.fontFamily
+          valueBold: true
+        }
+
+        InfoRow {
+          width: parent.width
+          label: root.svc ? root.svc.t("sysproxy") : "System proxy"
+          value: root.svc && root.svc.sysproxyEnabled
+            ? root.svc.t("sysproxyOnValue", root.svc.sysproxyHost, root.svc.sysproxyPort)
+            : (root.svc ? root.svc.t("disabled") : "Off")
+          valueColor: root.svc && root.svc.sysproxyEnabled ? Color.accent : Util.alpha(root.fg, 0.75)
           foreground: root.fg
           fontFamily: root.fontFamily
           valueBold: true
@@ -300,6 +450,7 @@ Item {
         Text {
           width: parent.width
           text: root.svc ? root.svc.t("networkSettingsHint") : ""
+          textFormat: Text.PlainText
           color: Util.alpha(root.fg, 0.42)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -334,6 +485,7 @@ Item {
             : root.svc && root.svc.mode === "direct"
               ? root.svc.t("modeDirectHint")
               : (root.svc ? root.svc.t("modeRuleHint") : "")
+          textFormat: Text.PlainText
           color: Util.alpha(root.fg, 0.5)
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -424,6 +576,7 @@ Item {
       Text {
         width: parent.width
         text: cell.value
+        textFormat: Text.PlainText
         color: cell.foreground
         font.family: cell.fontFamily
         font.pixelSize: Style.font.subtitle
@@ -436,6 +589,7 @@ Item {
       Text {
         width: parent.width
         text: cell.glyph + " " + cell.caption
+        textFormat: Text.PlainText
         color: Util.alpha(cell.foreground, 0.5)
         font.family: cell.fontFamily
         font.pixelSize: Style.font.caption
