@@ -156,9 +156,10 @@ Item {
   property bool configLoading: false
   property bool configReloading: false
 
-  // Raw /proxies map plus the group ordering taken from GLOBAL.all, which is
+  // Core and provider nodes, plus the group ordering taken from GLOBAL.all, which is
   // the only place the core preserves the order groups appear in the config.
   property var proxies: ({})
+  property var proxyProviderNames: ({})
   property var groupNames: []
   property var delays: ({})
   property var testing: ({})
@@ -250,26 +251,6 @@ Item {
       if (a[i] !== b[i]) return false
     }
     return true
-  }
-
-  // Only the fields the panel binds to. History and extra change on every
-  // probe and would otherwise force a full group-list rebuild every poll.
-  function proxyStamp(p) {
-    if (!p) return ""
-    var all = p.all
-    return String(p.now || "") + "\x1f" + String(p.type || "") + "\x1f"
-      + (p.hidden === true ? "1" : "0") + "\x1f" + (p.udp ? "1" : "0") + "\x1f"
-      + (all && all.length ? all.join("\x1e") : "")
-  }
-
-  function proxiesUiStamp(map, groups) {
-    var parts = []
-    var i
-    for (i = 0; i < groups.length; i++)
-      parts.push(groups[i] + "=" + proxyStamp(map[groups[i]]))
-    if (map && map["GLOBAL"] && groups.indexOf("GLOBAL") < 0)
-      parts.push("GLOBAL=" + proxyStamp(map["GLOBAL"]))
-    return parts.join("|")
   }
 
   function connUpload(id) {
@@ -810,10 +791,30 @@ Item {
     }
 
     if (data.proxies && data.proxies.proxies) {
-      var nextProxies = data.proxies.proxies
+      var nextProxies = Object.create(null)
+      var coreProxies = data.proxies.proxies
+      for (var coreName in coreProxies) nextProxies[coreName] = coreProxies[coreName]
+      var nextProviderNames = Object.create(null)
+      var providers = data.providersProxies && data.providersProxies.providers
+      if (providers) {
+        for (var providerName in providers) {
+          var providerNodes = providers[providerName] && providers[providerName].proxies
+          if (!Array.isArray(providerNodes)) continue
+          for (var j = 0; j < providerNodes.length; j++) {
+            var node = providerNodes[j]
+            if (!node || typeof node.name !== "string" || node.name === ""
+                || Object.prototype.hasOwnProperty.call(nextProxies, node.name)) continue
+            // Core groups, built-ins and static nodes keep precedence. The
+            // first provider wins when several providers expose the same name.
+            nextProxies[node.name] = node
+            nextProviderNames[node.name] = providerName
+          }
+        }
+      }
+      proxyProviderNames = nextProviderNames
       var global = nextProxies["GLOBAL"]
       var ordered = []
-      var seen = {}
+      var seen = Object.create(null)
       if (global && global.all) {
         for (var i = 0; i < global.all.length; i++) {
           var name = global.all[i]
@@ -831,12 +832,14 @@ Item {
         seen[key] = true
       }
 
-      var stamp = proxiesUiStamp(nextProxies, ordered)
+      // Node availability and probe history can change without any group
+      // changing. Refresh that data while keeping the group list stable.
+      var stamp = JSON.stringify(nextProxies)
       if (stamp !== lastProxiesStamp) {
         lastProxiesStamp = stamp
         proxies = nextProxies
-        if (!sameStringList(groupNames, ordered)) groupNames = ordered
       }
+      if (!sameStringList(groupNames, ordered)) groupNames = ordered
 
       var nodes = 0
       for (var proxyName in nextProxies) {
@@ -1372,8 +1375,12 @@ Item {
     testQueue = queue
     testProc.pendingName = next.name
     testProc.pendingGroup = next.group
-    var path = (next.group ? "/group/" : "/proxies/") + encode(next.name)
-      + "/delay?timeout=" + testTimeout + "&url=" + encodeURIComponent(testUrl)
+    var provider = proxyProviderNames[next.name]
+    var path = next.group ? "/group/" + encode(next.name) + "/delay"
+      : provider !== undefined
+        ? "/providers/proxies/" + encode(provider) + "/" + encode(next.name) + "/healthcheck"
+        : "/proxies/" + encode(next.name) + "/delay"
+    path += "?timeout=" + testTimeout + "&url=" + encodeURIComponent(testUrl)
     testProc.command = ["/usr/bin/bash", runner, "get", path]
     testProc.running = true
   }

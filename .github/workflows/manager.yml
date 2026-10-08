@@ -18,6 +18,9 @@ jobs:
         with:
           go-version: '1.22'
           cache-dependency-path: manager/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: Go unit tests
         run: go -C manager test ./...
       - name: Go vet
@@ -28,6 +31,8 @@ jobs:
         run: ./tests/bootstrap.sh
       - name: System Proxy contract tests
         run: ./tests/sysproxy.sh
+      - name: Provider node regression tests
+        run: ./tests/provider-nodes.sh
       - name: Security regression tests
         run: ./tests/security-regressions.sh
       - name: Validate plugin manifest

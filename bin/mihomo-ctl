@@ -533,19 +533,21 @@ or_null() {
 
 fetch_bundle() {
   local include_proxies="$1"
-  local dir version configs proxies version_pid configs_pid proxies_pid=""
-  local version_ok=0 configs_ok=0 proxies_ok=0
+  local dir version configs proxies providers_proxies version_pid configs_pid proxies_pid="" providers_pid=""
+  local version_ok=0 configs_ok=0 proxies_ok=0 providers_ok=0
   dir="$(mktemp -d)"
   request GET /version >"$dir/version" & version_pid=$!
   request GET /configs >"$dir/configs" & configs_pid=$!
   if [[ "$include_proxies" == 1 ]]; then
     request GET /proxies >"$dir/proxies" & proxies_pid=$!
+    request GET /providers/proxies >"$dir/providers" & providers_pid=$!
   fi
   # A failed request writes an error envelope to its file and exits non-zero.
   # Treat that as "no data"; never hand the envelope to the UI as a live core.
   if wait "$version_pid"; then version_ok=1; fi
   if wait "$configs_pid"; then configs_ok=1; fi
   if [[ -n "$proxies_pid" ]] && wait "$proxies_pid"; then proxies_ok=1; fi
+  if [[ -n "$providers_pid" ]] && wait "$providers_pid"; then providers_ok=1; fi
   if [[ "$version_ok" -ne 1 || ! -s "$dir/version" ]]; then
     rm -rf "$dir"
     fail "cannot reach mihomo (${SOURCE}: ${SOCKET:-$ADDRESS})"
@@ -553,18 +555,23 @@ fetch_bundle() {
   version="$(cat "$dir/version")"
   configs=""
   proxies=""
+  providers_proxies=""
   if [[ "$configs_ok" -eq 1 ]]; then
     configs="$(cat "$dir/configs")"
   fi
   if [[ "$include_proxies" == 1 && "$proxies_ok" -eq 1 ]]; then
     proxies="$(cat "$dir/proxies")"
   fi
+  if [[ "$include_proxies" == 1 && "$providers_ok" -eq 1 ]]; then
+    providers_proxies="$(cat "$dir/providers")"
+  fi
   rm -rf "$dir"
   local sysproxy
   sysproxy="$(sysproxy_status_json)"
   if [[ "$include_proxies" == 1 ]]; then
-    printf '{"version":%s,"configs":%s,"proxies":%s,"sysproxy":%s}\n' \
-      "$(or_null "$version")" "$(or_null "$configs")" "$(or_null "$proxies")" "$sysproxy"
+    printf '{"version":%s,"configs":%s,"proxies":%s,"providersProxies":%s,"sysproxy":%s}\n' \
+      "$(or_null "$version")" "$(or_null "$configs")" "$(or_null "$proxies")" \
+      "$(or_null "$providers_proxies")" "$sysproxy"
   else
     printf '{"version":%s,"configs":%s,"sysproxy":%s}\n' \
       "$(or_null "$version")" "$(or_null "$configs")" "$sysproxy"
@@ -628,9 +635,9 @@ case "$command" in
     ;;
 
   # One process, one poll. `status` is the cheap heartbeat (bar + other pages).
-  # `core` also pulls /proxies, which is the large payload, and only when the
+  # `core` also pulls /proxies and /providers/proxies, and only when the
   # Home or Proxies page is showing. The GETs run in parallel so a poll is one
-  # RTT, not three sequential curls.
+  # RTT, not four sequential curls.
   status)
     fetch_bundle 0
     ;;

@@ -88,6 +88,11 @@ for supported CPU architectures and a checksum file.
 | Rules | Every rule from the config; filter by domain / type / target | `/rules` |
 | Diagnostics | Core setup, TUN/network checks, and recovery hints | `mihomo-manager` / `mihomo-setup` |
 
+Home and Proxies include nodes from `proxy-providers` as well as static
+`proxies`. Provider probe history supplies the delay badges; testing an
+individual provider node uses its provider healthcheck endpoint. Groups,
+built-ins, and static nodes keep precedence when names overlap.
+
 Writes (switch node, switch mode, latency test, close connections, update a
 provider, enable TUN) go to the running core. Profile and managed-settings
 writes use `bin/mihomo-manager`, which validates generated configuration before
@@ -223,6 +228,7 @@ go -C manager vet ./...
 ./tests/integration.sh
 ./tests/bootstrap.sh
 ./tests/sysproxy.sh
+./tests/provider-nodes.sh
 ./tests/security-regressions.sh
 ./tests/validate-plugin.sh
 bash -n deploy bin/* tests/*.sh
