@@ -16,7 +16,9 @@ Panel {
   ipcTarget: "io.github.lijiawei0305-pixel.mihomo"
   manageIpc: false
 
-  readonly property var svc: bar?.shell?.serviceFor(root.moduleName)
+  readonly property var svc: ServiceStore.instance
+    ? ServiceStore.instance
+    : (bar && bar.shell && typeof bar.shell.serviceFor === "function" ? bar.shell.serviceFor(root.moduleName) : null)
 
   readonly property color fg: bar ? bar.foreground : Color.popups.text
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
@@ -26,10 +28,12 @@ Panel {
   readonly property bool connected: svc ? svc.connected : false
   readonly property string modeLabel: svc ? svc.modeLabel : "--"
 
-  readonly property var currentPage: page === "proxies" ? proxiesPage
+  readonly property var currentPage: page === "profiles" ? profilesPage
+    : page === "proxies" ? proxiesPage
     : page === "config" ? configPage
     : page === "connections" ? connectionsPage
     : page === "rules" ? rulesPage
+    : page === "diagnostics" ? diagnosticsPage
     : homePage
 
   function goto(target) {
@@ -41,7 +45,7 @@ Panel {
   }
 
   function cyclePage(direction) {
-    var order = ["home", "proxies", "config", "connections", "rules"]
+    var order = ["home", "profiles", "proxies", "connections", "rules", "config"]
     var index = order.indexOf(page)
     if (index < 0) index = 0
     page = order[(index + direction + order.length) % order.length]
@@ -84,7 +88,12 @@ Panel {
         mode: root.svc.mode,
         version: root.svc.version,
         endpoint: root.svc.endpointTarget,
-        page: root.page
+        page: root.page,
+        activeProfile: root.svc.activeProfile,
+        configPath: root.svc.configPath,
+        configSize: root.svc.configSize,
+        configMtime: root.svc.configMtime,
+        nodeCount: root.svc.nodeCount
       })
     }
   }
@@ -165,7 +174,7 @@ Panel {
       id: keyCatcher
       anchors.fill: parent
 
-      // A focused filter field owns every key, including j/k/1-5.
+      // A focused filter field owns every key, including j/k/1-6.
       blocked: root.currentPage !== null && root.currentPage.editing === true
 
       onCloseRequested: root.close()
@@ -176,10 +185,11 @@ Panel {
       }
       onTextKey: function(text) {
         if (text === "1") root.goto("home")
-        else if (text === "2") root.goto("proxies")
-        else if (text === "3") root.goto("config")
+        else if (text === "2") root.goto("profiles")
+        else if (text === "3") root.goto("proxies")
         else if (text === "4") root.goto("connections")
         else if (text === "5") root.goto("rules")
+        else if (text === "6") root.goto("config")
         else if (text === "r" && root.svc) root.svc.refreshPage()
         else if (text === "/" && root.currentPage
                  && typeof root.currentPage.focusFilter === "function")
@@ -255,10 +265,11 @@ Panel {
           }
 
           NavButton { width: parent.width; pageId: "home";        glyph: "󰋜"; title: root.svc ? root.svc.t("navHome") : "Home" }
+          NavButton { width: parent.width; pageId: "profiles";    glyph: "󰈙"; title: root.svc ? root.svc.t("navProfiles") : "Profiles" }
           NavButton { width: parent.width; pageId: "proxies";     glyph: "󰖟"; title: root.svc ? root.svc.t("navProxies") : "Proxies" }
-          NavButton { width: parent.width; pageId: "config";      glyph: "󰈙"; title: root.svc ? root.svc.t("navConfig") : "Config" }
           NavButton { width: parent.width; pageId: "connections"; glyph: "󰇧"; title: root.svc ? root.svc.t("navConnections") : "Connections" }
           NavButton { width: parent.width; pageId: "rules";       glyph: "󰘬"; title: root.svc ? root.svc.t("navRules") : "Rules" }
+          NavButton { width: parent.width; pageId: "config";      glyph: "󰘚"; title: root.svc ? root.svc.t("navConfig") : "Config" }
         }
 
         Column {
@@ -317,6 +328,18 @@ Panel {
           anchors.fill: parent
           visible: root.page === "home"
           svc: root.svc
+          openProfiles: function() { root.goto("profiles") }
+          openDiagnostics: function() { root.goto("diagnostics") }
+          fg: root.fg
+          fontFamily: root.fontFamily
+        }
+
+        ProfilesPage {
+          id: profilesPage
+          anchors.fill: parent
+          visible: root.page === "profiles"
+          svc: root.svc
+          openRules: function() { root.goto("rules") }
           fg: root.fg
           fontFamily: root.fontFamily
         }
@@ -344,6 +367,19 @@ Panel {
           anchors.fill: parent
           visible: root.page === "connections"
           svc: root.svc
+          addRuleForDomain: function(domain) {
+            root.goto("rules")
+            rulesPage.openAddForDomain(domain, "domain-suffix")
+          }
+          fg: root.fg
+          fontFamily: root.fontFamily
+        }
+
+        DiagnosticsPage {
+          id: diagnosticsPage
+          anchors.fill: parent
+          visible: root.page === "diagnostics"
+          svc: root.svc
           fg: root.fg
           fontFamily: root.fontFamily
         }
@@ -354,6 +390,17 @@ Panel {
           visible: root.page === "rules"
           svc: root.svc
           fg: root.fg
+          fontFamily: root.fontFamily
+        }
+
+        // This popup must live in the KeyboardPanel window. Keeping it on the
+        // bar-widget root makes Qt Quick Controls attach its overlay to the bar
+        // window, so binding_required would update the state without showing the
+        // choice dialog over the open Mihomo panel.
+        BindingDialog {
+          id: bindingDialog
+          svc: root.svc
+          foreground: root.fg
           fontFamily: root.fontFamily
         }
 

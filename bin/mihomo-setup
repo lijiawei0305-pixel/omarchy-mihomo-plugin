@@ -1,0 +1,353 @@
+#!/usr/bin/env bash
+# Bootstrap a usable mihomo core for the plugin without touching a user's
+# existing mihomo configuration. The script is intentionally small and
+# dependency-free; the QML service consumes its JSON status envelope.
+
+set -u
+
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_ROOT="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-mihomo"
+CORE_HOME="${OMARCHY_MIHOMO_CORE_HOME:-$CONFIG_ROOT/core}"
+BOOTSTRAP_CONFIG="$CORE_HOME/config.yaml"
+SERVICE_DIR="${OMARCHY_MIHOMO_SYSTEMD_USER_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user}"
+SERVICE_FILE="$SERVICE_DIR/omarchy-mihomo.service"
+PID_FILE="$CORE_HOME/mihomo.pid"
+LOG_FILE="$CORE_HOME/mihomo.log"
+CTL="${MIHOMO_CTL:-$SELF_DIR/mihomo-ctl}"
+
+json_string() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  value="${value//$'\r'/\\r}"
+  value="${value//$'\t'/\\t}"
+  printf '"%s"' "$value"
+}
+
+binary_path() {
+  local candidate
+  if [[ -n "${MIHOMO_BIN:-}" ]]; then
+    if [[ "${MIHOMO_BIN}" == */* && -x "${MIHOMO_BIN}" ]]; then
+      printf '%s' "${MIHOMO_BIN}"
+      return 0
+    fi
+    candidate="$(command -v "${MIHOMO_BIN}" 2>/dev/null || true)"
+    [[ -x "$candidate" ]] && { printf '%s' "$candidate"; return 0; }
+  fi
+  for candidate in mihomo mihomo-alpha verge-mihomo clash-meta; do
+    candidate="$(command -v "$candidate" 2>/dev/null || true)"
+    if [[ -x "$candidate" ]]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+core_pid() {
+  pgrep -x 'mihomo|mihomo-alpha|verge-mihomo|clash-meta|clash' 2>/dev/null | head -n1
+}
+
+running_binary_path() {
+  local pid="$(core_pid || true)" path=""
+  [[ -n "$pid" ]] || return 1
+  path="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
+  [[ -x "$path" ]] && printf '%s' "$path"
+}
+
+controller_ready() {
+  [[ -x "$CTL" || -n "$(command -v "$CTL" 2>/dev/null || true)" ]] || return 1
+  "$CTL" get /version >/dev/null 2>&1
+}
+
+systemd_user_available() {
+  command -v systemctl >/dev/null 2>&1 || return 1
+  systemctl --user show-environment >/dev/null 2>&1
+}
+
+systemd_quote() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '"%s"' "$value"
+}
+
+write_bootstrap_config() {
+  mkdir -p "$CORE_HOME" || return 1
+  chmod 700 "$CORE_HOME" 2>/dev/null || true
+  if [[ -e "$BOOTSTRAP_CONFIG" ]]; then
+    [[ -f "$BOOTSTRAP_CONFIG" ]] || return 1
+    chmod 600 "$BOOTSTRAP_CONFIG" 2>/dev/null || true
+    return 0
+  fi
+  local tmp
+  tmp="$(mktemp "$CORE_HOME/.config.XXXXXX")" || return 1
+  if ! {
+    printf '%s\n' \
+      'mixed-port: 7890' \
+      'mode: rule' \
+      'log-level: warning' \
+      'ipv6: false' \
+      'external-controller: 127.0.0.1:9090' \
+      'profile:' \
+      '  store-selected: true' \
+      '  store-fake-ip: true'
+  } >"$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  chmod 600 "$tmp" || { rm -f "$tmp"; return 1; }
+  mv -f "$tmp" "$BOOTSTRAP_CONFIG"
+}
+
+write_service() {
+  mkdir -p "$SERVICE_DIR" || return 1
+  if [[ -e "$SERVICE_FILE" ]] && ! grep -q 'X-Omarchy-Mihomo-Managed: true' "$SERVICE_FILE" 2>/dev/null; then
+    return 2
+  fi
+  local binary
+  binary="$1"
+  local tmp
+  tmp="$(mktemp "$SERVICE_DIR/.omarchy-mihomo.XXXXXX")" || return 1
+  if ! {
+    printf '%s\n' \
+      '[Unit]' \
+      'Description=Mihomo core managed by Omarchy Mihomo' \
+      'After=network-online.target' \
+      'Wants=network-online.target' \
+      '' \
+      '[Service]' \
+      '# X-Omarchy-Mihomo-Managed: true' \
+      "ExecStart=$(systemd_quote "$binary") -d $(systemd_quote "$CORE_HOME") -f $(systemd_quote "$BOOTSTRAP_CONFIG")" \
+      'Restart=on-failure' \
+      'RestartSec=2' \
+      '' \
+      '[Install]' \
+      'WantedBy=default.target'
+  } >"$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  chmod 600 "$tmp" || { rm -f "$tmp"; return 1; }
+  mv -f "$tmp" "$SERVICE_FILE"
+}
+
+wait_for_controller() {
+  local attempts="${MIHOMO_SETUP_ATTEMPTS:-24}"
+  local i
+  for ((i = 0; i < attempts; i++)); do
+    if controller_ready; then return 0; fi
+    sleep 0.5
+  done
+  return 1
+}
+
+emit_status() {
+  local state="$1" message="${2:-}" binary="${3:-}" managed="${4:-false}"
+  local pid="$(core_pid || true)"
+  local running=false controller=false
+  [[ -n "$pid" ]] && running=true
+  controller_ready && controller=true
+  printf '{"ok":true,"state":%s,"message":%s,"binary":%s,"binaryPath":%s,"coreRunning":%s,"controller":%s,"managed":%s,"coreHome":%s,"service":%s}\n' \
+    "$(json_string "$state")" "$(json_string "$message")" \
+    "$([[ -n "$binary" ]] && printf 'true' || printf 'false')" "$(json_string "$binary")" \
+    "$running" "$controller" "$managed" "$(json_string "$CORE_HOME")" "$(json_string "$SERVICE_FILE")"
+}
+
+emit_failure() {
+  local state="$1" message="$2" binary="${3:-}" managed="${4:-false}"
+  local pid="$(core_pid || true)"
+  local running=false controller=false
+  [[ -n "$pid" ]] && running=true
+  controller_ready && controller=true
+  printf '{"ok":false,"state":%s,"message":%s,"binary":%s,"binaryPath":%s,"coreRunning":%s,"controller":%s,"managed":%s,"coreHome":%s,"service":%s}\n' \
+    "$(json_string "$state")" "$(json_string "$message")" \
+    "$([[ -n "$binary" ]] && printf 'true' || printf 'false')" "$(json_string "$binary")" \
+    "$running" "$controller" "$managed" "$(json_string "$CORE_HOME")" "$(json_string "$SERVICE_FILE")"
+}
+
+preflight_check() {
+  local id="$1" status="$2" message="$3" key="${4:-}" args="${5:-}"
+  printf '{"id":%s,"status":%s,"message":%s' \
+    "$(json_string "$id")" "$(json_string "$status")" "$(json_string "$message")"
+  if [[ -n "$key" ]]; then
+    printf ',"messageKey":%s,"messageArgs":%s' "$(json_string "$key")" "$args"
+  fi
+  printf '}'
+}
+
+active_firewall() {
+  local ufw firewall_cmd
+  ufw="$(command -v ufw 2>/dev/null || true)"
+  if [[ -n "$ufw" ]] && "$ufw" status 2>/dev/null | grep -qi 'status: active'; then
+    printf 'UFW'
+    return 0
+  fi
+  firewall_cmd="$(command -v firewall-cmd 2>/dev/null || true)"
+  if [[ -n "$firewall_cmd" ]] && [[ "$($firewall_cmd --state 2>/dev/null || true)" == "running" ]]; then
+    printf 'firewalld'
+    return 0
+  fi
+  return 1
+}
+
+preflight() {
+  local stack="gvisor" executable cap_status cap_message cap_key cap_args
+  local firewall_status firewall_message firewall_key firewall_args firewall
+  if [[ "${1:-}" == "--stack" && -n "${2:-}" && -z "${3:-}" ]]; then
+    stack="${2,,}"
+  elif [[ "$#" -ne 0 ]]; then
+    emit_failure "invalid-command" "Usage: mihomo-setup preflight [--stack gvisor|system|mixed]"
+    return 2
+  fi
+
+  executable="$(binary_path 2>/dev/null || running_binary_path 2>/dev/null || true)"
+  cap_status="warning"
+  cap_message="Mihomo executable is unavailable"
+  cap_key="diagnosticExecutableUnavailable"
+  cap_args='[]'
+  if [[ -z "$executable" ]]; then
+    cap_message="mihomo executable is unavailable"
+  elif ! command -v getcap >/dev/null 2>&1; then
+    cap_message="getcap is unavailable"
+    cap_key="diagnosticGetcapUnavailable"
+  elif getcap_output="$(getcap "$executable" 2>/dev/null || true)"; [[ "$getcap_output" == *cap_net_admin* && "$getcap_output" == *cap_net_raw* ]]; then
+    cap_status="ok"
+    cap_message="$getcap_output"
+    cap_key=""
+    cap_args='[]'
+  else
+    cap_message="mihomo is missing cap_net_admin; run: sudo setcap cap_net_admin,cap_net_raw=+ep $executable"
+    cap_key="diagnosticCapabilityMissing"
+    cap_args="[$(json_string "sudo setcap cap_net_admin,cap_net_raw=+ep $executable")]"
+  fi
+
+  firewall_status="ok"
+  firewall_message="$stack"
+  firewall_key=""
+  firewall_args='[]'
+  if [[ "$stack" == "system" || "$stack" == "mixed" ]] && firewall="$(active_firewall || true)" && [[ -n "$firewall" ]]; then
+    firewall_status="warning"
+    firewall_message="$stack TUN stack may conflict with $firewall; try gVisor or adjust firewall rules"
+    firewall_key="diagnosticFirewallTunCompatibility"
+    firewall_args="[$(json_string "$stack"),$(json_string "$firewall")]"
+  fi
+
+  printf '{"checks":['
+  preflight_check "tunCapability" "$cap_status" "$cap_message" "$cap_key" "$cap_args"
+  printf ','
+  preflight_check "firewallTunCompatibility" "$firewall_status" "$firewall_message" "$firewall_key" "$firewall_args"
+  printf ']}'
+  printf '\n'
+}
+
+try_existing_user_services() {
+  systemd_user_available || return 1
+  local unit start_result
+  for unit in mihomo.service clash-meta.service verge-mihomo.service; do
+    if systemctl --user cat "$unit" >/dev/null 2>&1; then
+      start_result=0
+      systemctl --user start "$unit" >/dev/null 2>&1 || start_result=$?
+      if [[ "$start_result" -eq 0 ]] && wait_for_controller; then return 0; fi
+      # Never start our own unit beside an existing unit that is still alive.
+      # Its controller may be on a custom endpoint, or the config may simply
+      # be broken; either way the user must repair/adopt that service first.
+      if [[ -n "$(core_pid || true)" ]] || systemctl --user is-active --quiet "$unit" >/dev/null 2>&1; then
+        return 2
+      fi
+    fi
+  done
+  return 1
+}
+
+start_managed_core() {
+  local binary="$1"
+  write_bootstrap_config || return 1
+  if systemd_user_available; then
+    local service_result=0
+    write_service "$binary" || service_result=$?
+    if [[ "$service_result" -eq 2 ]]; then
+      return 2
+    elif [[ "$service_result" -ne 0 ]]; then
+      return 1
+    fi
+    systemctl --user daemon-reload || return 1
+    systemctl --user enable --now omarchy-mihomo.service || return 1
+    wait_for_controller
+    return $?
+  fi
+
+  # A normal Omarchy installation has a user systemd manager. Keep a small
+  # fallback for minimal sessions so setup can still get a controller online.
+  if [[ -f "$PID_FILE" ]]; then
+    local old_pid
+    old_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+    if [[ "$old_pid" =~ ^[0-9]+$ ]] && kill -0 "$old_pid" 2>/dev/null; then
+      wait_for_controller
+      return $?
+    fi
+  fi
+  setsid "$binary" -d "$CORE_HOME" -f "$BOOTSTRAP_CONFIG" >>"$LOG_FILE" 2>&1 < /dev/null &
+  printf '%s\n' "$!" >"$PID_FILE"
+  chmod 600 "$PID_FILE" "$LOG_FILE" 2>/dev/null || true
+  wait_for_controller
+}
+
+status() {
+  local binary=""
+  binary="$(binary_path 2>/dev/null || true)"
+  if controller_ready; then
+    emit_status "ready" "Mihomo is ready" "$binary" false
+  elif [[ -n "$(core_pid || true)" ]]; then
+    emit_status "controller-unavailable" "Mihomo is running but its controller could not be reached" "$binary" false
+  elif [[ -n "$binary" ]]; then
+    emit_status "needs-setup" "Mihomo is installed but has not been set up" "$binary" false
+  else
+    emit_status "needs-core" "Mihomo is not installed" "" false
+  fi
+}
+
+setup() {
+  local binary=""
+  local existing_result=0
+  binary="$(binary_path 2>/dev/null || true)"
+  if controller_ready; then
+    emit_status "ready" "Using the existing Mihomo core" "$binary" false
+    return 0
+  fi
+  if [[ -z "$binary" ]]; then
+    emit_failure "needs-core" "Mihomo is not installed; install it and try again"
+    return 1
+  fi
+  if [[ -n "$(core_pid || true)" ]]; then
+    emit_failure "controller-unavailable" "Mihomo is running but its controller could not be reached" "$binary"
+    return 1
+  fi
+  try_existing_user_services || existing_result=$?
+  if [[ "$existing_result" -eq 0 ]]; then
+    emit_status "ready" "Using an existing Mihomo user service" "$binary" false
+    return 0
+  fi
+  if [[ "$existing_result" -eq 2 ]]; then
+    emit_failure "controller-unavailable" "An existing Mihomo service is running but its controller could not be reached" "$binary"
+    return 1
+  fi
+  local result=0
+  start_managed_core "$binary" || result=$?
+  if [[ "$result" -eq 2 ]]; then
+    emit_failure "service-conflict" "The plugin service already exists and is not managed by this plugin" "$binary"
+    return 1
+  elif [[ "$result" -ne 0 ]]; then
+    emit_failure "start-failed" "Mihomo could not be started; open Diagnostics for details" "$binary" true
+    return 1
+  fi
+  emit_status "ready" "Mihomo is ready" "$binary" true
+}
+
+case "${1:-status}" in
+  status) status ;;
+  setup) setup ;;
+  preflight) preflight "${@:2}" ;;
+  *) emit_failure "invalid-command" "Usage: mihomo-setup [status|setup|preflight]"; exit 2 ;;
+esac

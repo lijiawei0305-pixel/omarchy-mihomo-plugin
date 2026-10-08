@@ -1,0 +1,9 @@
+mixed-port: 7890
+mode: rule
+proxies:
+  - name: demo
+    type: direct
+proxy-groups:
+  - name: Auto
+    type: select
+    proxies: [demo]

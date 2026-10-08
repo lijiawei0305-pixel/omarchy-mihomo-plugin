@@ -23,19 +23,90 @@ Item {
   property var shell: null
   property var manifest: null
 
-  readonly property bool ready: manifest !== null
-    && manifest.__sourceDir !== undefined
-    && String(manifest.__sourceDir) !== ""
-  readonly property string pluginDir: ready
-    ? String(manifest.__sourceDir)
-    : Quickshell.env("HOME") + "/.config/omarchy/plugins/io.github.lijiawei0305-pixel.mihomo"
+  readonly property string pluginDir: {
+    if (manifest && manifest.__sourceDir) return String(manifest.__sourceDir)
+    var url = String(Qt.resolvedUrl("."))
+    if (url.indexOf("file://") === 0) return url.substring(7).replace(/\/$/, "")
+    return (Quickshell.env("HOME") || "") + "/.config/omarchy/plugins/io.github.lijiawei0305-pixel.mihomo"
+  }
   readonly property string runner: pluginDir + "/bin/mihomo-ctl"
+  readonly property bool ready: runner !== ""
+  readonly property string managerRunner: pluginDir + "/bin/mihomo-manager"
+  readonly property string setupRunner: pluginDir + "/bin/mihomo-setup"
+
+  // Profile operations have their own queue. Subscription requests can take up
+  // to 30 seconds and must never block node/mode/system-proxy actions.
+  property var profiles: []
+  property string activeProfile: ""
+  property string activeProfileName: ""
+  property bool profileLoading: false
+  property bool profileMutating: false
+  property string profileError: ""
+  property string managerFailureMessage: ""
+  property bool managerInstalled: false
+  property bool managerChecking: false
+  property bool managerInstalling: false
+  property string setupState: "checking"
+  property string setupMessage: ""
+  property string setupBinaryPath: ""
+  property string setupCoreHome: ""
+  property string setupServicePath: ""
+  property bool setupLoading: false
+  property bool setupManagerPending: false
+  property bool tunPreflightLoading: false
+  property bool tunPreflightTarget: false
+  property bool tunPreflightIssue: false
+  property bool tunFixLoading: false
+  property bool tunOwnershipPromptVisible: false
+  property bool tunAdoptionTarget: false
+  property var managerSettings: ({})
+  property bool managerSettingsLoading: false
+  property bool managerSettingsMutating: false
+  property var pendingManagerSettings: ({})
+  property var diagnostics: []
+  property bool diagnosticsLoading: false
+  property string profileSourceId: ""
+  property string profileSourceText: ""
+  property var profileSourceCallback: null
+  property string profileURL: ""
+  property var profileURLCallback: null
+  property string profileURLRequestId: ""
+  property int profileURLRequestSerial: 0
+  property bool profileURLLoading: false
+  property string profileRuntimeText: ""
+  property bool profileRuntimeLoading: false
+  property var profileRuntimeCallback: null
+  property string profileOverrideText: ""
+  property bool profileOverrideLoading: false
+  property var profileOverrideCallback: null
+  property string globalOverrideText: ""
+  property bool globalOverrideEmpty: true
+  property bool globalOverrideLoading: false
+  property var globalOverrideCallback: null
+  property var overrideSaveCallback: null
+  property bool overrideSavePending: false
+  property bool profileSourceLoading: false
+
+  property var customRules: []
+  property bool customRulesLoading: false
+  property bool bindingRequired: false
+  property var bindingRequiredCandidates: []
+  property string bindingRequiredProfileId: ""
+  property string bindingRequiredPolicy: ""
+  property bool bindingCandidatesLoading: false
+  property var pendingManagerActionAfterBinding: null
 
   // Set by the panel. Drives poll cadence and the streaming subscriptions.
   property bool active: false
   property string page: "home"
 
   property bool connected: false
+  property bool hadConnection: false
+  property bool managerReconcilePending: false
+  property bool managerInitialReconcileDone: false
+  // onReadyChanged and onCompleted can both see the initial ready=true.
+  property bool readyWorkStarted: false
+  property bool coreRefreshPending: false
   property string lastError: ""
   property string version: ""
   property string endpointTarget: ""
@@ -53,6 +124,7 @@ Item {
   property bool tunAutoRoute: false
   property string tunDnsHijack: ""
   property bool tunAutoDetect: false
+  property bool tunStrictRoute: false
 
   // OS-level system proxy. Not a core setting — Clash Verge keeps this on the
   // GUI side and writes gsettings / the session environment itself.
@@ -132,11 +204,17 @@ Item {
     language: root.language
   }
 
-  readonly property int proxyListenPort: mixedPort > 0 ? mixedPort
-    : (httpPort > 0 ? httpPort : socksPort)
+  // System Proxy writes HTTP, HTTPS, and SOCKS to one endpoint. A regular
+  // HTTP or SOCKS listener is not a valid fallback for that contract.
+  readonly property int systemProxyPort: mixedPort > 0 ? mixedPort : 0
 
   readonly property string captureMode: tunEnabled ? "tun"
     : (sysproxyEnabled ? "sysproxy" : "off")
+
+  // The normal path is complete only when the core is reachable, the helper is
+  // available, and a profile has been selected. Raw-config users can still use
+  // the panel, but the home page uses this flag to present a short setup path.
+  readonly property bool onboardingComplete: connected && managerInstalled && activeProfile !== ""
 
   readonly property string modeLabel: t(mode === "global" ? "modeGlobal"
     : mode === "direct" ? "modeDirect"
@@ -269,10 +347,358 @@ Item {
     return fmtBytes(bytes) + "/s"
   }
 
+  function profileNameFor(id) {
+    for (var i = 0; i < profiles.length; i++) {
+      if (String(profiles[i].id || "") === String(id || ""))
+        return String(profiles[i].name || id || "")
+    }
+    return String(id || "")
+  }
+
+  function applyProfiles(raw) {
+    profileLoading = false
+    try {
+      var data = JSON.parse(raw)
+      if (!data.ok) { profileError = String(data.error || t("actionFailed")); return }
+      var payload = data.data
+      if (payload && payload.profiles !== undefined) {
+        profiles = payload.profiles
+        activeProfile = String(payload.activeProfile || "")
+        activeProfileName = profileNameFor(activeProfile)
+        syncManagedConfigInfo()
+        syncSetupState()
+      } else if (Array.isArray(payload)) {
+        profiles = payload
+      }
+      profileError = ""
+    } catch (e) {
+      profileError = t("parseError")
+    }
+  }
+
+  function refreshProfiles() {
+    if (!ready || !managerInstalled || profileProc.running) return
+    profileLoading = true
+    profileProc.command = ["/usr/bin/bash", managerRunner, "status"]
+    profileProc.running = true
+  }
+
+  function refreshGlobalOverride() {
+    if (!ready || !managerInstalled || globalOverrideProc.running) return
+    globalOverrideLoading = true
+    globalOverrideProc.running = true
+  }
+
+  function refreshManagerSettings() {
+    if (!ready || !managerInstalled || managerSettingsProc.running) return
+    managerSettingsLoading = true
+    managerSettingsProc.running = true
+  }
+
+  function refreshSetupStatus() {
+    if (!ready || setupStatusProc.running) return
+    setupStatusProc.running = true
+  }
+
+  function applySetupStatus(raw) {
+    try {
+      var data = JSON.parse(raw)
+      setupState = String(data.state || (data.ok ? "ready" : "attention"))
+      if (setupState === "needs-core") setupMessage = t("setupNeedsCore")
+      else if (setupState === "needs-setup") setupMessage = t("setupNeedsSetup")
+      else if (setupState === "controller-unavailable") setupMessage = t("setupControllerUnavailable")
+      else if (setupState === "ready") setupMessage = t("setupReady")
+      else if (setupState === "service-conflict") setupMessage = t("setupServiceConflict")
+      else if (setupState === "start-failed") setupMessage = t("setupStartFailed")
+      else setupMessage = String(data.message || "")
+      setupBinaryPath = String(data.binaryPath || "")
+      setupCoreHome = String(data.coreHome || "")
+      setupServicePath = String(data.service || "")
+    } catch (e) {
+      setupState = "attention"
+      setupMessage = t("parseError")
+    }
+    syncSetupState()
+  }
+
+  function syncSetupState() {
+    if (setupLoading || setupManagerPending) return
+    if (connected) {
+      if (managerInstalled) {
+        setupState = activeProfile === "" ? "needs-profile" : "ready"
+        setupMessage = activeProfile === "" ? t("setupAddProfile") : t("setupReady")
+      } else if (setupState !== "needs-core" && setupState !== "controller-unavailable") {
+        setupState = "needs-setup"
+        setupMessage = t("setupManagerPending")
+      }
+    }
+  }
+
+  function setup() {
+    if (!ready || setupLoading || setupProc.running) return
+    setupLoading = true
+    setupManagerPending = false
+    setupState = "setting-up"
+    setupMessage = t("setupInProgress")
+    setupProc.running = true
+  }
+
+  function finishSetup() {
+    setupLoading = false
+    setupManagerPending = false
+    setupState = connected && managerInstalled
+      ? (activeProfile === "" ? "needs-profile" : "ready")
+      : "starting"
+    setupMessage = connected && managerInstalled ? t("setupReady") : t("setupInProgress")
+    refreshSetupStatus()
+    refresh(true)
+    if (managerInstalled) {
+      refreshProfiles()
+      refreshManagerSettings()
+    }
+  }
+
+  function setManagerSetting(key, value) {
+    if (!ready || !managerInstalled || !key || value === undefined || value === null) return
+    var pending = {}
+    for (var field in pendingManagerSettings) pending[field] = pendingManagerSettings[field]
+    pending[key] = String(value)
+    pendingManagerSettings = pending
+    settingsBatchTimer.restart()
+  }
+
+  function flushManagerSettings() {
+    var patch = ["settings", "patch"]
+    for (var key in pendingManagerSettings) {
+      patch.push(key)
+      patch.push(String(pendingManagerSettings[key]))
+    }
+    pendingManagerSettings = ({})
+    if (patch.length === 2) return
+    managerSettingsMutating = true
+    enqueueManager(patch)
+  }
+
+  function managerActionPending(kind) {
+    if (managerCurrentAction.length > 0 && managerCurrentAction[0] === kind) return true
+    for (var i = 0; i < managerActionQueue.length; i++) {
+      if (managerActionQueue[i].length > 0 && managerActionQueue[i][0] === kind) return true
+    }
+    return false
+  }
+
+  function reconcileProfiles() {
+    if (!ready || !managerInstalled || managerReconcilePending) return
+    // Reconcile is a manager mutation: serialize it with profile updates and
+    // selections so a core restart cannot race a queued subscription apply.
+    managerReconcilePending = true
+    enqueueManager(["reconcile"])
+    if (managerCurrentAction.length === 0 && managerActionQueue.length === 0)
+      managerReconcilePending = false
+  }
+
+  function maybeInitialReconcile() {
+    if (!ready || !managerInstalled || !connected || managerInitialReconcileDone) return
+    // The manager status probe and the first controller probe are independent
+    // processes. Mark this edge once and let the manager queue serialize the
+    // actual restore with any profile action already in flight.
+    managerInitialReconcileDone = true
+    reconcileProfiles()
+  }
+
+  function enqueueManager(args) {
+    if (!ready || !managerInstalled) return
+    var key = JSON.stringify(args)
+    if (managerCurrentAction.length > 0 && JSON.stringify(managerCurrentAction) === key) return
+    for (var i = 0; i < managerActionQueue.length; i++) {
+      if (JSON.stringify(managerActionQueue[i]) === key) return
+    }
+    var queue = managerActionQueue.slice()
+    queue.push(args)
+    managerActionQueue = queue
+    runNextManagerAction()
+  }
+
+  function markManagerFailure(raw) {
+    var message = root.actionErrorMessage(raw)
+    root.profileError = message !== "" ? message : root.t("actionFailed")
+  }
+
+  function runNextManagerAction() {
+    if (managerProc.running || managerActionQueue.length === 0) return
+    var queue = managerActionQueue.slice()
+    var args = queue.shift()
+    managerActionQueue = queue
+    managerCurrentAction = args
+    managerFailureMessage = ""
+    managerOutput = ""
+    profileMutating = true
+    notice = t("profileActionInProgress")
+    managerProc.command = ["/usr/bin/bash", managerRunner].concat(args)
+    managerProc.running = true
+  }
+
+  function installManager(forSetup) {
+    if (!ready || managerInstalling || installProc.running) return
+    if (forSetup === true) setupManagerPending = true
+    managerInstalling = true
+    installProc.running = true
+  }
+
+  function importCurrent(name) {
+    enqueueManager(["profile", "import-current", "--name", name || "Local Config"])
+  }
+
+  function addProfile(url, name, intervalSec) {
+    var interval = intervalSec === undefined ? 21600 : Number(intervalSec)
+    enqueueManager(["profile", "add", "--url", url, "--name", name,
+                    "--update-interval", String(interval), "--activate-if-empty"])
+  }
+  function selectProfile(id) { enqueueManager(["profile", "select", id]) }
+  function updateProfile(id, viaProxy) {
+    var args = ["profile", "update", id]
+    if (viaProxy) args.push("--via-proxy")
+    enqueueManager(args)
+  }
+  function updateProfileViaProxy(id) { updateProfile(id, true) }
+  function deleteProfile(id) { enqueueManager(["profile", "delete", id]) }
+  function renameProfile(id, name) { enqueueManager(["profile", "rename", id, name]) }
+  function setProfileURL(id, url) { enqueueManager(["profile", "set-url", id, url]) }
+  function readProfileSource(id, callback) {
+    if (!ready || !managerInstalled || sourceProc.running) return
+    profileSourceId = id
+    profileSourceText = ""
+    profileSourceCallback = callback
+    profileSourceLoading = true
+    sourceProc.command = ["/usr/bin/bash", managerRunner, "profile", "source", id]
+    sourceProc.running = true
+  }
+
+  function readProfileURL(id, callback) {
+    if (!ready || !managerInstalled || urlProc.running) return
+    profileURL = ""
+    profileURLRequestSerial += 1
+    profileURLRequestId = id + ":" + String(profileURLRequestSerial)
+    profileURLCallback = callback
+    profileURLLoading = true
+    urlProc.command = ["/usr/bin/bash", managerRunner, "profile", "url", id]
+    urlProc.running = true
+  }
+
+  function readProfileRuntime(id, callback) {
+    if (!ready || !managerInstalled || runtimeProc.running) return
+    profileRuntimeLoading = true
+    profileRuntimeCallback = callback
+    runtimeProc.command = ["/usr/bin/bash", managerRunner, "profile", "runtime", id]
+    runtimeProc.running = true
+  }
+
+  function readProfileOverride(id, callback) {
+    if (!ready || !managerInstalled || overrideProc.running) return
+    profileOverrideLoading = true
+    profileOverrideCallback = callback
+    overrideProc.command = ["/usr/bin/bash", managerRunner, "profile", "override", id]
+    overrideProc.running = true
+  }
+
+  function readGlobalOverride(callback) {
+    if (!ready || !managerInstalled || globalOverrideProc.running) return
+    globalOverrideText = ""
+    globalOverrideLoading = true
+    globalOverrideCallback = callback
+    globalOverrideProc.running = true
+  }
+
+  function saveOverride(globalScope, id, text, callback) {
+    if (!ready || !managerInstalled || overrideSavePending) return
+    overrideSavePending = true
+    overrideSaveCallback = callback
+    var args = ["override"]
+    if (globalScope) {
+      args = args.concat(["global", "set", "--text", String(text || "")])
+    } else if (id) {
+      args = args.concat(["profile", id, "set", "--text", String(text || "")])
+    } else {
+      overrideSavePending = false
+      overrideSaveCallback = null
+      return
+    }
+    enqueueManager(args)
+  }
+
+  function openGlobalOverride() {
+    if (!ready || !managerInstalled || overrideOpenProc.running) return
+    overrideOpenProc.command = ["/usr/bin/bash", managerRunner, "override", "open-global"]
+    overrideOpenProc.running = true
+  }
+
+  function openProfileOverride(id) {
+    if (!ready || !managerInstalled || overrideOpenProc.running || !id) return
+    overrideOpenProc.command = ["/usr/bin/bash", managerRunner, "override", "open-profile", id]
+    overrideOpenProc.running = true
+  }
+
+  // Recompile/apply is intentionally kept on the manager queue. It must not
+  // race a subscription update or a profile selection.
+  function recompileActiveProfile() {
+    if (!managerInstalled || activeProfile === "") return
+    enqueueManager(["config", "apply", activeProfile])
+  }
+
+  function refreshCustomRules() {
+    if (!ready || !managerInstalled || customRulesProc.running) return
+    customRulesLoading = true
+    customRulesProc.running = true
+  }
+
+  function addCustomRule(domain, matchType, policyName) {
+    enqueueManager(["rule", "add", "--domain", String(domain || ""),
+                    "--match", String(matchType || "domain-suffix"),
+                    "--policy", String(policyName || "proxy")])
+  }
+
+  function updateCustomRule(id, domain, matchType, policyName) {
+    var args = ["rule", "update", id]
+    if (domain !== undefined && domain !== null) args.push("--domain", String(domain))
+    if (matchType !== undefined && matchType !== null) args.push("--match", String(matchType))
+    if (policyName !== undefined && policyName !== null) args.push("--policy", String(policyName))
+    enqueueManager(args)
+  }
+
+  function deleteCustomRule(id) { enqueueManager(["rule", "delete", id]) }
+  function enableCustomRule(id) { enqueueManager(["rule", "enable", id]) }
+  function disableCustomRule(id) { enqueueManager(["rule", "disable", id]) }
+
+  function setPolicyBinding(profileId, policyName, target) {
+    if (!profileId || !policyName || !target) return
+    enqueueManager(["policy", "binding", "set", profileId, policyName, target])
+  }
+
+  function openProxyBindingEditor() {
+    if (!ready || !managerInstalled || activeProfile === "" || bindingCandidatesProc.running) return
+    bindingCandidatesLoading = true
+    bindingCandidatesProc.command = ["/usr/bin/bash", managerRunner,
+                                     "policy", "binding", "candidates", activeProfile]
+    bindingCandidatesProc.running = true
+  }
+
+  function clearBindingRequired() {
+    pendingManagerActionAfterBinding = null
+    bindingRequired = false
+    bindingRequiredCandidates = []
+    bindingRequiredProfileId = ""
+    bindingRequiredPolicy = ""
+  }
+
   // --- reads ---------------------------------------------------------------
 
   function refresh(forceProxies) {
-    if (!ready || coreProc.running) return
+    if (!ready) return
+    if (coreProc.running) {
+      if (forceProxies === true) coreRefreshPending = true
+      return
+    }
+    coreRefreshPending = false
     var needProxies = forceProxies === true
       || (active && (page === "home" || page === "proxies"))
     coreProc.command = ["/usr/bin/bash", runner, needProxies ? "core" : "status"]
@@ -297,10 +723,24 @@ Item {
   }
 
   function refreshPage() {
-    if (page === "config") refreshConfig()
-    else if (page === "rules") refreshRules()
+    if (page === "profiles") {
+      refreshProfiles()
+      refreshGlobalOverride()
+      refreshCustomRules()
+    } else if (page === "config") refreshConfig()
+    else if (page === "rules") {
+      refreshRules()
+      refreshCustomRules()
+    }
     else if (page === "connections") refreshConnections()
+    else if (page === "diagnostics") refreshDiagnostics()
     else refresh()
+  }
+
+  function refreshDiagnostics() {
+    if (!ready || !managerInstalled || diagnosticsProc.running) return
+    diagnosticsLoading = true
+    diagnosticsProc.running = true
   }
 
   function refreshConfig() {
@@ -315,19 +755,28 @@ Item {
     configInfoProc.running = true
   }
 
+  function markDisconnected(message) {
+    var wasConnected = connected
+    connected = false
+    lastError = message || t("connectFailed")
+    if (wasConnected) {
+      // Preserve the fact that a live connection existed. The next successful
+      // edge is therefore a reconnect and must reconcile the active profile.
+      hadConnection = true
+    }
+  }
+
   function applyCore(raw) {
     var data
     try {
       data = JSON.parse(raw)
     } catch (e) {
-      connected = false
-      lastError = t("parseError")
+      markDisconnected(t("parseError"))
       return
     }
 
     if (data.error) {
-      connected = false
-      lastError = String(data.error)
+      markDisconnected(String(data.error))
       return
     }
 
@@ -336,7 +785,7 @@ Item {
     var configs = data.configs
     if (configs) {
       setIfChanged("mode", String(configs.mode || "rule"))
-      setIfChanged("mixedPort", Number(configs["mixed-port"] || configs.port || 0))
+      setIfChanged("mixedPort", Number(configs["mixed-port"] || 0))
       setIfChanged("allowLan", configs["allow-lan"] === true)
       setIfChanged("ipv6", configs.ipv6 === true)
       setIfChanged("logLevel", String(configs["log-level"] || ""))
@@ -348,6 +797,7 @@ Item {
       setIfChanged("tunDevice", String(tun.device || ""))
       setIfChanged("tunAutoRoute", tun["auto-route"] === true)
       setIfChanged("tunAutoDetect", tun["auto-detect-interface"] === true)
+      setIfChanged("tunStrictRoute", tun["strict-route"] === true)
       var hijack = tun["dns-hijack"]
       setIfChanged("tunDnsHijack", hijack && hijack.length ? hijack.join(", ") : "")
       setIfChanged("sniffing", configs.sniffing === true)
@@ -415,13 +865,20 @@ Item {
   // Clash Verge rewrites the OS proxy when mixed-port changes while system
   // proxy is on. Skip the first poll so we do not surprise an existing session.
   function maybeRefreshSysproxyPort() {
-    var port = proxyListenPort
+    var port = systemProxyPort
     if (!mixedPortSeen) {
       if (port > 0) mixedPortSeen = true
       return
     }
     if (sysproxyWritePending || !sysproxyWanted || !sysproxyEnabled) return
-    if (port <= 0 || port === sysproxyPort) return
+    if (port <= 0) {
+      // A runtime that loses mixed-port must not leave the desktop pointed at
+      // a dead endpoint. The ctl-side preflight also protects the transition
+      // itself from races.
+      enqueue(["sysproxy", "off"], "", "sysproxy")
+      return
+    }
+    if (port === sysproxyPort) return
     enqueue(["sysproxy", "on", "127.0.0.1", String(port)], "", "sysproxy")
   }
 
@@ -480,6 +937,17 @@ Item {
     }
   }
 
+  function applyCustomRules(raw) {
+    customRulesLoading = false
+    try {
+      var data = JSON.parse(raw)
+      if (!data.ok) return
+      var next = data.data || []
+      if (!Array.isArray(next) && next.rules !== undefined) next = next.rules
+      if (Array.isArray(next)) customRules = next
+    } catch (e) {}
+  }
+
   function applyConnections(raw) {
     connectionsLoading = false
     try {
@@ -494,18 +962,20 @@ Item {
         var meta = c.metadata || {}
         var chains = c.chains || []
         var id = String(c.id || "")
-        var host = String(meta.host || meta.destinationIP || "") + ":" + String(meta.destinationPort || "")
+        var domain = String(meta.host || meta.destinationIP || "")
+        var host = domain + ":" + String(meta.destinationPort || "")
         var process = String(meta.process || "")
         var chain = chains.slice().reverse().join(" / ")
         var rule = String(c.rule || "") + (c.rulePayload ? "(" + c.rulePayload + ")" : "")
         var upload = Number(c.upload || 0)
         var download = Number(c.download || 0)
         bytes[id] = { upload: upload, download: download }
-        idents.push(id + "\x1f" + host + "\x1f" + process + "\x1f" + chain + "\x1f" + rule)
+        idents.push(id + "\x1f" + domain + "\x1f" + host + "\x1f" + process + "\x1f" + chain + "\x1f" + rule)
         byteParts.push(id + "=" + upload + "," + download)
         rows.push({
           id: id,
           host: host,
+          domain: domain,
           process: process,
           network: String(meta.network || "").toUpperCase(),
           type: String(meta.type || ""),
@@ -539,6 +1009,9 @@ Item {
   // One queue, one process. Mutations are cheap and ordering matters (a mode
   // switch followed by a node switch must not race), so they run serially.
   property var actionQueue: []
+  property var managerActionQueue: []
+  property var managerCurrentAction: []
+  property string managerOutput: ""
 
   function enqueue(args, note, kind) {
     var queue = actionQueue.slice()
@@ -598,7 +1071,7 @@ Item {
   function setSysproxy(enabled) {
     if (!ready) return
     if (enabled) {
-      var port = proxyListenPort
+      var port = systemProxyPort
       if (port <= 0) {
         notice = t("sysproxyNoPort")
         return
@@ -615,20 +1088,154 @@ Item {
     }
   }
 
+  function requestTunPreflight(enabled) {
+    if (!enabled) {
+      applyTunEnabled(false)
+      return
+    }
+    if (activeProfile !== "" && managerSettingsLoading) {
+      notice = t("settingsApplying")
+      return
+    }
+    if (tunPreflightLoading) {
+      notice = t("tunCheckInProgress")
+      return
+    }
+    tunPreflightTarget = true
+    tunPreflightLoading = true
+    notice = t("tunCheckInProgress")
+    var stack = tunStack !== "" ? tunStack : "gvisor"
+    if (managerInstalled && managerRunner !== "") {
+      tunPreflightProc.command = ["/usr/bin/bash", managerRunner, "doctor", "tun",
+                                  "--stack", stack]
+    } else if (setupRunner !== "") {
+      tunPreflightProc.command = ["/usr/bin/bash", setupRunner, "preflight", "--stack", stack]
+    } else {
+      tunPreflightLoading = false
+      tunPreflightTarget = false
+      applyTunEnabled(true)
+      return
+    }
+    tunPreflightProc.running = true
+  }
+
+  function applyTunPreflight(raw) {
+    var checks = []
+    try {
+      var data = JSON.parse(raw)
+      checks = Array.isArray(data.checks) ? data.checks : []
+    } catch (e) {
+      tunPreflightLoading = false
+      tunPreflightIssue = true
+      notice = t("tunPreflightBlocked")
+      return
+    }
+    if (checks.length === 0) {
+      tunPreflightLoading = false
+      tunPreflightIssue = true
+      notice = t("tunPreflightBlocked")
+      return
+    }
+    for (var i = 0; i < checks.length; i++) {
+      var check = checks[i]
+      // Raw Config mode used to enable TUN without getcap. Missing libcap is
+      // not proof the core lacks permission (it may be root), so do not block.
+      if (check.id === "tunCapability" && check.messageKey === "diagnosticGetcapUnavailable") continue
+      if ((check.id === "tunCapability" || check.id === "firewallTunCompatibility")
+          && check.status !== "ok") {
+        tunPreflightLoading = false
+        tunPreflightIssue = true
+        diagnostics = checks
+        notice = check.id === "tunCapability"
+          ? t("tunPermissionRequired")
+          : t("tunPreflightBlocked")
+        return
+      }
+    }
+    tunPreflightLoading = false
+    tunPreflightIssue = false
+    var target = tunPreflightTarget
+    tunPreflightTarget = false
+    applyTunEnabled(target)
+  }
+
   function setTun(enabled) {
     if (!ready) return
+    if (enabled) {
+      requestTunPreflight(true)
+      return
+    }
+    tunPreflightTarget = false
+    if (tunPreflightLoading) {
+      tunPreflightLoading = false
+      tunPreflightProc.running = false
+    }
+    applyTunEnabled(false)
+  }
+
+  function fixTunPermission() {
+    if (!ready || !managerInstalled || tunFixLoading || tunFixProc.running) return
+    tunPreflightTarget = true
+    tunFixLoading = true
+    notice = t("fixingTunPermission")
+    tunFixProc.running = true
+  }
+
+  function applyTunEnabled(enabled) {
+    if (!ready) return
+    if (activeProfile !== "") {
+      if (!managerInstalled) {
+        notice = t("setupInProgress")
+        return
+      }
+      if (managerSettingsLoading || managerSettingsMutating) {
+        notice = t("settingsApplying")
+        return
+      }
+      var management = String(managerSettings.tunManagement || "managed")
+      if (management === "managed") {
+        tunEnabled = enabled
+        setManagerSetting("tun-enable", enabled ? "true" : "false")
+        notice = enabled ? t("tunOnNotice") : t("tunOffNotice")
+        return
+      }
+      tunAdoptionTarget = enabled
+      tunOwnershipPromptVisible = true
+      return
+    }
     tunEnabled = enabled
     var tun = {
       enable: enabled,
       "auto-route": true,
       "auto-detect-interface": true
     }
-    tun.stack = tunStack !== "" ? tunStack : "mixed"
+    // Preserve an explicit system/mixed stack in raw-config mode. The manager
+    // default is gVisor, but enabling TUN must not silently rewrite a user's
+    // existing Mihomo stack choice.
+    tun.stack = tunStack !== "" ? tunStack : "gvisor"
     if (tunDevice !== "") tun.device = tunDevice
     if (tunDnsHijack !== "") tun["dns-hijack"] = tunDnsHijack.split(", ")
     else tun["dns-hijack"] = ["any:53"]
     enqueue(["patch", "/configs", JSON.stringify({ tun: tun })],
             enabled ? t("tunOnNotice") : t("tunOffNotice"))
+  }
+
+  function cancelTunAdoption() {
+    tunOwnershipPromptVisible = false
+  }
+
+  function adoptTunControl() {
+    if (!ready || !managerInstalled) return
+    tunOwnershipPromptVisible = false
+    setManagerSetting("tun-management", "managed")
+    setManagerSetting("tun-enable", tunAdoptionTarget ? "true" : "false")
+    setManagerSetting("tun-stack", tunStack !== "" ? tunStack : "gvisor")
+    setManagerSetting("tun-auto-route", tunAutoRoute ? "true" : "false")
+    setManagerSetting("tun-auto-detect-interface", tunAutoDetect ? "true" : "false")
+    setManagerSetting("tun-strict-route", tunStrictRoute ? "true" : "false")
+    setManagerSetting("tun-dns-hijack", tunDnsHijack)
+    tunEnabled = tunAdoptionTarget
+    notice = tunAdoptionTarget ? t("tunOnNotice") : t("tunOffNotice")
   }
 
   function closeConnection(id) {
@@ -658,6 +1265,10 @@ Item {
       setIfChanged("lastError", String(data.error))
       return
     }
+    if (activeProfile !== "") {
+      syncManagedConfigInfo()
+      return
+    }
     setIfChanged("configPath", String(data.path || ""))
     setIfChanged("configSize", Number(data.size || 0))
     setIfChanged("configMtime", Number(data.mtime || 0))
@@ -665,6 +1276,7 @@ Item {
     setIfChanged("dnsListen", String(data.dnsListen || ""))
     setIfChanged("dnsMode", String(data.dnsMode || ""))
     setIfChanged("dnsFakeIp", String(data.dnsFakeIp || ""))
+    syncManagedConfigInfo()
   }
 
   function actionErrorMessage(raw) {
@@ -677,11 +1289,52 @@ Item {
     } catch (e) {
       return text
     }
-    return ""
+    return text
+  }
+
+  function applyManagerError(raw, failedAction) {
+    bindingRequired = false
+    bindingRequiredCandidates = []
+    bindingRequiredProfileId = ""
+    bindingRequiredPolicy = ""
+    try {
+      var data = JSON.parse(String(raw || ""))
+      if (data.code === "binding_required" || data.code === "binding_unavailable") {
+        bindingRequired = true
+        bindingRequiredCandidates = data.candidates || []
+        bindingRequiredProfileId = String(data.profileId || activeProfile || "")
+        bindingRequiredPolicy = String(data.policy || "proxy")
+        var pending = failedAction ? failedAction.slice() : null
+        // A first profile can be stored as inactive when its Proxy policy
+        // needs a human group choice. Retry selection after binding instead
+        // of repeating the download and creating a second profile.
+        if (pending && pending.length >= 2 && pending[0] === "profile"
+            && pending[1] === "add" && bindingRequiredProfileId !== "")
+          pending = ["profile", "select", bindingRequiredProfileId]
+        pendingManagerActionAfterBinding = pending
+      } else {
+        pendingManagerActionAfterBinding = null
+      }
+    } catch (e) {
+      pendingManagerActionAfterBinding = null
+    }
+  }
+
+  function syncManagedConfigInfo() {
+    if (!managerInstalled || activeProfile === "") return
+    if (managerRuntimeInfoProc.running) return
+    managerRuntimeInfoProc.command = ["/usr/bin/bash", managerRunner,
+                                      "profile", "runtime", activeProfile]
+    managerRuntimeInfoProc.running = true
   }
 
   function reloadConfig() {
     if (!ready || configReloading) return
+    if (activeProfile !== "") {
+      configReloading = true
+      enqueueManager(["config", "apply", activeProfile])
+      return
+    }
     if (configPath === "") {
       notice = t("noConfigPath")
       return
@@ -767,15 +1420,64 @@ Item {
 
   // --- lifecycle -----------------------------------------------------------
 
-  onReadyChanged: {
-    if (!ready) return
+  function startReadyWork() {
+    // A second call while the first startup is still armed would set
+    // Process.targetRunning and run endpoint, language, setup, and profile
+    // checks again when the first process exits.
+    if (!ready || readyWorkStarted) return
+    readyWorkStarted = true
+    managerInitialReconcileDone = false
     endpointProc.running = true
     langProc.running = true
+    setupStatusProc.running = true
+    managerChecking = true
+    profileCheckProc.running = true
     refresh(true)
+  }
+
+  Component.onCompleted: {
+    ServiceStore.instance = root
+    if (ready) startReadyWork()
+  }
+
+  Component.onDestruction: {
+    // A replacement service may already have published itself. Only the
+    // instance that is still current may clear the bridge.
+    if (ServiceStore.instance === root) ServiceStore.instance = null
+  }
+
+  onConnectedChanged: {
+    if (!connected) {
+      if (setupState === "ready") {
+        setupState = "controller-unavailable"
+        setupMessage = lastError !== "" ? lastError : t("setupControllerUnavailable")
+      }
+      return
+    }
+    var wasConnected = hadConnection
+    hadConnection = true
+    if (wasConnected) reconcileProfiles()
+    else maybeInitialReconcile()
+    syncSetupState()
+  }
+
+  onManagerInstalledChanged: syncSetupState()
+  onActiveProfileChanged: syncSetupState()
+
+  onReadyChanged: {
+    if (!ready) {
+      readyWorkStarted = false
+      return
+    }
+    startReadyWork()
   }
 
   onActiveChanged: {
     if (active) {
+      // Re-detect a Mihomo binary that the user installed while the panel was
+      // closed. Setup status is intentionally independent of the controller
+      // heartbeat.
+      refreshSetupStatus()
       refresh()
       refreshPage()
     }
@@ -783,6 +1485,20 @@ Item {
 
   onPageChanged: {
     if (active) refreshPage()
+  }
+
+  // A light background tick keeps inactive subscriptions fresh without tying
+  // it to the visible-page core poll cadence.
+  Timer {
+    interval: 15 * 60 * 1000
+    running: root.ready && root.managerInstalled
+    repeat: true
+    onTriggered: root.updateDue()
+  }
+
+  function updateDue() {
+    if (!managerInstalled || managerActionQueue.length > 0) return
+    enqueueManager(["profile", "update-due"])
   }
 
   Timer {
@@ -793,12 +1509,475 @@ Item {
     onTriggered: root.refresh()
   }
 
+  // Let a short burst of edits become one atomic manager update. This avoids
+  // compiling, validating, and applying the active profile once per field.
+  Timer {
+    id: settingsBatchTimer
+    interval: 400
+    repeat: false
+    onTriggered: root.flushManagerSettings()
+  }
+
   Timer {
     interval: 3000
     running: root.ready && root.active && root.page === "connections"
     repeat: true
     triggeredOnStart: true
     onTriggered: root.refreshConnections()
+  }
+
+  Process {
+    id: setupStatusProc
+    command: ["/usr/bin/bash", root.setupRunner, "status"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.applySetupStatus(text)
+    }
+    onExited: function(exitCode) {
+      if (exitCode !== 0 && !root.setupLoading) {
+        root.setupState = "attention"
+        root.setupMessage = root.t("setupStatusUnavailable")
+      }
+    }
+  }
+
+  Process {
+    id: setupProc
+    command: ["/usr/bin/bash", root.setupRunner, "setup"]
+    stdout: StdioCollector {
+      id: setupOut
+      waitForEnd: true
+      onStreamFinished: root.applySetupStatus(text)
+    }
+    onExited: function(exitCode) {
+      if (exitCode !== 0) {
+        root.setupLoading = false
+        root.setupManagerPending = false
+        if (root.setupMessage === "") root.setupMessage = root.t("setupFailed")
+        root.setupState = root.setupState === "needs-core" ? "needs-core" : "attention"
+        root.refreshSetupStatus()
+        return
+      }
+      if (root.managerInstalled) root.finishSetup()
+      else root.installManager(true)
+    }
+  }
+
+  Process {
+    id: installProc
+    command: ["/usr/bin/bash", root.pluginDir + "/bin/install-manager"]
+    stdout: StdioCollector {
+      id: installOut
+      waitForEnd: true
+    }
+    onExited: function(exitCode) {
+      root.managerInstalling = false
+      if (exitCode !== 0 && root.setupManagerPending) {
+        root.setupLoading = false
+        root.setupManagerPending = false
+        root.setupState = "attention"
+        root.setupMessage = root.actionErrorMessage(installOut.text) || root.t("managerInstallFailed")
+        return
+      }
+      root.managerChecking = true
+      profileCheckProc.running = true
+    }
+  }
+
+  Process {
+    id: profileCheckProc
+    command: ["/usr/bin/bash", root.managerRunner, "status"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          var data = JSON.parse(text)
+          root.managerInstalled = data.ok === true
+          if (root.managerInstalled) {
+            root.applyProfiles(text)
+            root.refreshManagerSettings()
+            // Cover the race where manager status finishes before the first
+            // successful controller poll. onConnectedChanged covers the other
+            // ordering and the reconnect path.
+            root.maybeInitialReconcile()
+            if (root.page === "diagnostics") root.refreshDiagnostics()
+          }
+        } catch (e) {
+          root.managerInstalled = false
+          root.managerInitialReconcileDone = false
+        }
+      }
+    }
+    onExited: {
+      root.managerChecking = false
+      if (exitCode !== 0) {
+        root.managerInstalled = false
+        root.managerInitialReconcileDone = false
+      }
+      else if (root.managerInstalled) root.refreshManagerSettings()
+      if (root.setupManagerPending) {
+        if (exitCode === 0 && root.managerInstalled) root.finishSetup()
+        else {
+          root.setupLoading = false
+          root.setupManagerPending = false
+          root.setupState = "attention"
+          root.setupMessage = root.t("managerInstallFailed")
+        }
+      }
+    }
+  }
+
+  Process {
+    id: managerSettingsProc
+    command: ["/usr/bin/bash", root.managerRunner, "settings", "get"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.managerSettingsLoading = false
+        try {
+          var data = JSON.parse(text)
+          if (data.ok && data.data) root.managerSettings = data.data
+        } catch (e) {}
+      }
+    }
+    onExited: root.managerSettingsLoading = false
+  }
+
+  Process {
+    id: diagnosticsProc
+    command: ["/usr/bin/bash", root.managerRunner, "doctor"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.diagnosticsLoading = false
+        try {
+          var data = JSON.parse(text)
+          root.diagnostics = data.checks || []
+        } catch (e) {
+          root.diagnostics = [{id: "diagnostics", status: "error", message: root.t("parseError")}]
+        }
+      }
+    }
+    onExited: root.diagnosticsLoading = false
+  }
+
+  Process {
+    id: tunPreflightProc
+    command: ["/usr/bin/bash", root.managerRunner, "doctor", "tun", "--stack", "gvisor"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.applyTunPreflight(text)
+    }
+    onExited: function(exitCode) {
+      if (exitCode !== 0 && root.tunPreflightLoading) {
+        root.tunPreflightLoading = false
+        root.tunPreflightIssue = true
+        root.notice = root.t("tunPreflightBlocked")
+      }
+    }
+  }
+
+  Process {
+    id: tunFixProc
+    command: ["/usr/bin/bash", root.managerRunner, "doctor", "fix-tun-permission"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.tunFixLoading = false
+        try {
+          var data = JSON.parse(text)
+          if (data.ok === true) {
+            root.notice = root.t("tunOnNotice")
+            root.tunPreflightIssue = false
+            // The repair command restarts plugin-managed Mihomo. Re-run the
+            // normal preflight so the original enable intent continues only
+            // after the new process has been verified.
+            if (root.tunPreflightTarget) root.requestTunPreflight(true)
+          } else {
+            root.tunPreflightIssue = true
+            root.notice = root.actionErrorMessage(text) || root.t("tunPermissionFixFailed")
+          }
+        } catch (e) {
+          root.tunPreflightIssue = true
+          root.notice = root.t("tunPermissionFixFailed")
+        }
+      }
+    }
+    onExited: function(exitCode) {
+      if (exitCode !== 0 && root.tunFixLoading) {
+        root.tunFixLoading = false
+        root.tunPreflightIssue = true
+        root.notice = root.t("tunPermissionFixFailed")
+      }
+    }
+  }
+
+  Process {
+    id: profileProc
+    command: ["/usr/bin/bash", root.managerRunner, "status"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.applyProfiles(text)
+    }
+    onExited: root.profileLoading = false
+  }
+
+  Process {
+    id: urlProc
+    command: ["/usr/bin/bash", root.managerRunner, "profile", "url", ""]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var requestId = root.profileURLRequestId
+        root.profileURLLoading = false
+        var value = ""
+        try {
+          var data = JSON.parse(text)
+          value = data.ok ? String(data.url || "") : ""
+        } catch (e) {}
+        if (requestId !== root.profileURLRequestId || requestId === "") return
+        root.profileURL = value
+        root.profileURLRequestId = ""
+        if (root.profileURLCallback) root.profileURLCallback(value)
+        root.profileURLCallback = null
+      }
+    }
+    onExited: {
+      root.profileURLLoading = false
+      if (root.profileURLRequestId !== "") {
+        root.profileURLRequestId = ""
+        root.profileURLCallback = null
+      }
+    }
+  }
+
+  Process {
+    id: globalOverrideProc
+    command: ["/usr/bin/bash", root.managerRunner, "override", "global", "get"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.globalOverrideLoading = false
+        try {
+          var data = JSON.parse(text)
+          root.globalOverrideText = data.ok ? String(data.override || "") : String(data.error || "")
+          root.globalOverrideEmpty = data.ok ? data.empty === true : true
+        } catch (e) { root.globalOverrideText = root.t("parseError") }
+        if (root.globalOverrideCallback) root.globalOverrideCallback(root.globalOverrideText)
+        root.globalOverrideCallback = null
+      }
+    }
+    onExited: {
+      root.globalOverrideLoading = false
+      if (exitCode !== 0) root.globalOverrideCallback = null
+    }
+  }
+
+  Process {
+    id: customRulesProc
+    command: ["/usr/bin/bash", root.managerRunner, "rule", "list"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.applyCustomRules(text)
+    }
+    onExited: root.customRulesLoading = false
+  }
+
+  Process {
+    id: bindingCandidatesProc
+    command: ["/usr/bin/bash", root.managerRunner,
+              "policy", "binding", "candidates", ""]
+    stdout: StdioCollector {
+      id: bindingCandidatesOut
+      waitForEnd: true
+      onStreamFinished: {
+        root.bindingCandidatesLoading = false
+        try {
+          var data = JSON.parse(String(text || ""))
+          if (!data.ok) {
+            root.bindingRequired = false
+            root.notice = root.actionErrorMessage(text)
+            if (root.notice === "") root.notice = root.t("actionFailed")
+            return
+          }
+          var payload = data.data || {}
+          var candidates = payload.candidates || data.candidates || []
+          if (!Array.isArray(candidates)) candidates = []
+          root.bindingRequiredCandidates = candidates
+          root.bindingRequiredProfileId = String(payload.profileId || data.profileId || root.activeProfile)
+          root.bindingRequiredPolicy = "proxy"
+          root.pendingManagerActionAfterBinding = null
+          root.bindingRequired = true
+        } catch (e) {
+          root.bindingRequired = false
+          root.notice = root.t("parseError")
+        }
+      }
+    }
+    onExited: function(exitCode) {
+      if (exitCode !== 0 && root.bindingCandidatesLoading) {
+        root.bindingCandidatesLoading = false
+        root.bindingRequired = false
+        root.notice = root.t("actionFailed")
+      }
+    }
+  }
+
+  Process {
+    id: overrideOpenProc
+    command: ["/usr/bin/bash", root.managerRunner, "override", "open-global"]
+    stdout: StdioCollector { waitForEnd: true }
+    onExited: {
+      if (exitCode === 0) root.refreshManagerSettings()
+      else root.markManagerFailure("")
+    }
+  }
+
+  Process {
+    id: managerRuntimeInfoProc
+    command: ["/usr/bin/bash", root.managerRunner, "profile", "runtime", ""]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        if (root.activeProfile === "") return
+        try {
+          var data = JSON.parse(text)
+          if (!data.ok) return
+          root.configPath = String(data.path || "")
+          root.configSize = Number(data.size || 0)
+          root.configMtime = Number(data.mtime || 0)
+        } catch (e) {}
+      }
+    }
+  }
+
+  Process {
+    id: runtimeProc
+    command: ["/usr/bin/bash", root.managerRunner, "profile", "runtime", ""]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.profileRuntimeLoading = false
+        try {
+          var data = JSON.parse(text)
+          root.profileRuntimeText = data.ok ? String(data.runtime || "") : String(data.error || "")
+        } catch (e) { root.profileRuntimeText = root.t("parseError") }
+        if (root.profileRuntimeCallback) root.profileRuntimeCallback(root.profileRuntimeText)
+        root.profileRuntimeCallback = null
+      }
+    }
+    onExited: {
+      root.profileRuntimeLoading = false
+      if (exitCode !== 0) root.profileRuntimeCallback = null
+    }
+  }
+
+  Process {
+    id: overrideProc
+    command: ["/usr/bin/bash", root.managerRunner, "profile", "override", ""]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.profileOverrideLoading = false
+        try {
+          var data = JSON.parse(text)
+          root.profileOverrideText = data.ok ? String(data.override || "") : String(data.error || "")
+        } catch (e) { root.profileOverrideText = root.t("parseError") }
+        if (root.profileOverrideCallback) root.profileOverrideCallback(root.profileOverrideText)
+        root.profileOverrideCallback = null
+      }
+    }
+    onExited: {
+      root.profileOverrideLoading = false
+      if (exitCode !== 0) root.profileOverrideCallback = null
+    }
+  }
+
+  Process {
+    id: sourceProc
+    command: ["/usr/bin/bash", root.managerRunner, "profile", "source", ""]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.profileSourceLoading = false
+        try {
+          var data = JSON.parse(text)
+          root.profileSourceText = data.ok ? String(data.source || "") : String(data.error || "")
+          if (root.profileSourceCallback) root.profileSourceCallback(root.profileSourceText)
+          root.profileSourceCallback = null
+        } catch (e) {
+          root.profileSourceText = root.t("parseError")
+          if (root.profileSourceCallback) root.profileSourceCallback(root.profileSourceText)
+          root.profileSourceCallback = null
+        }
+      }
+    }
+    onExited: {
+      root.profileSourceLoading = false
+      if (exitCode !== 0) root.profileSourceCallback = null
+    }
+  }
+
+  Process {
+    id: managerProc
+    command: ["/usr/bin/bash", root.managerRunner, "status"]
+    stdout: StdioCollector {
+      id: managerOut
+      waitForEnd: true
+      onStreamFinished: root.managerOutput = text
+    }
+    onExited: function(exitCode) {
+      var finishedAction = root.managerCurrentAction.slice()
+      var output = root.managerOutput !== "" ? root.managerOutput : managerOut.text
+      var failure = exitCode !== 0 ? root.actionErrorMessage(output) : ""
+      if (exitCode !== 0) {
+        root.applyManagerError(output, finishedAction)
+        if (failure === "") failure = root.t("actionFailed")
+        root.managerFailureMessage = failure
+        root.profileError = failure
+        root.notice = failure
+      } else {
+        if (finishedAction.length > 0 && finishedAction[0] === "policy") {
+          root.bindingRequired = false
+          root.bindingRequiredCandidates = []
+          root.bindingRequiredProfileId = ""
+          root.bindingRequiredPolicy = ""
+        }
+        root.managerFailureMessage = ""
+        root.profileError = ""
+        root.notice = root.t("profileActionCompleted")
+      }
+      if (finishedAction.length > 0 && finishedAction[0] === "override") {
+        var saveCallback = root.overrideSaveCallback
+        root.overrideSaveCallback = null
+        root.overrideSavePending = false
+        if (saveCallback) saveCallback(exitCode === 0, exitCode === 0 ? "" : failure)
+      }
+      root.profileMutating = false
+      if (finishedAction.length > 0 && finishedAction[0] === "reconcile") root.managerReconcilePending = false
+      if (finishedAction.length > 0 && finishedAction[0] === "config") root.configReloading = false
+      root.managerCurrentAction = []
+      root.runNextManagerAction()
+      if (exitCode === 0 && finishedAction.length > 0 && finishedAction[0] === "policy"
+          && root.pendingManagerActionAfterBinding !== null) {
+        var pending = root.pendingManagerActionAfterBinding
+        root.pendingManagerActionAfterBinding = null
+        root.enqueueManager(pending)
+      }
+      if (finishedAction.length > 0 && finishedAction[0] === "settings")
+        root.managerSettingsMutating = root.managerActionPending("settings")
+      if (finishedAction.length > 0 && finishedAction[0] === "settings")
+        root.refresh(true)
+      root.refreshProfiles()
+      root.refreshManagerSettings()
+      if (finishedAction.length > 0 && (finishedAction[0] === "rule" || finishedAction[0] === "policy"))
+        root.refreshCustomRules()
+      if (finishedAction.length > 0 && finishedAction[0] === "override") {
+        root.refreshGlobalOverride()
+        root.refresh(true)
+      }
+      if (finishedAction.length > 0 && finishedAction[0] === "config") root.refreshConfigInfo()
+    }
   }
 
   Process {
@@ -850,8 +2029,11 @@ Item {
     }
     onExited: function(exitCode) {
       if (exitCode !== 0 && root.lastError === "") {
-        root.connected = false
-        root.lastError = root.t("connectFailed")
+        markDisconnected(root.t("connectFailed"))
+      }
+      if (root.coreRefreshPending) {
+        root.coreRefreshPending = false
+        root.refresh(true)
       }
     }
   }

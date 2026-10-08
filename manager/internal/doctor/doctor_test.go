@@ -1,0 +1,198 @@
+package doctor
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestDoctorValueHelpers(t *testing.T) {
+	data := map[string]any{
+		"mixed-port": json.Number("7890"),
+		"version":    "1.2.3",
+		"meta":       map[string]any{"version": "fallback"},
+	}
+	if got := intAt(data, "mixed-port"); got != 7890 {
+		t.Fatalf("intAt = %d, want 7890", got)
+	}
+	if got := firstString(data, "missing", "version"); got != "1.2.3" {
+		t.Fatalf("firstString = %q, want 1.2.3", got)
+	}
+	if got := firstString(data, "meta.version"); got != "fallback" {
+		t.Fatalf("nested firstString = %q, want fallback", got)
+	}
+}
+
+func TestDoctorNetworkValues(t *testing.T) {
+	report := Report{}
+	addNetworkChecks(&report, map[string]any{
+		"mixed-port": float64(7890),
+		"tun": map[string]any{
+			"enable": true,
+			"stack":  "gvisor",
+			"device": "mihomo",
+		},
+		"dns": map[string]any{
+			"enable":        true,
+			"enhanced-mode": "fake-ip",
+		},
+	})
+	checks := map[string]Check{}
+	for _, check := range report.Checks {
+		checks[check.ID] = check
+	}
+	if checks["tunEnabled"].Status != "ok" || checks["dnsEnabled"].Status != "ok" {
+		t.Fatalf("network checks = %#v", checks)
+	}
+	if checks["httpProxyPort"].Message != "7890" {
+		t.Fatalf("proxy port check = %#v", checks["httpProxyPort"])
+	}
+}
+
+func TestDisabledTUNIsInformationalAndSkipsInterfaceProbe(t *testing.T) {
+	report := Report{}
+	addNetworkChecks(&report, map[string]any{
+		"tun": map[string]any{"enable": false},
+		"dns": map[string]any{"enable": true, "enhanced-mode": "fake-ip"},
+	})
+	checks := map[string]Check{}
+	for _, check := range report.Checks {
+		checks[check.ID] = check
+	}
+	if checks["tunEnabled"].Status != "info" {
+		t.Fatalf("disabled TUN status = %#v", checks["tunEnabled"])
+	}
+	if _, ok := checks["tunInterface"]; ok {
+		t.Fatal("disabled TUN should not probe for an interface")
+	}
+}
+
+func TestDNSChecksFallBackToRuntimeConfig(t *testing.T) {
+	report := Report{}
+	addNetworkChecksWithRuntime(&report, map[string]any{
+		"tun": map[string]any{"enable": false},
+	}, map[string]any{
+		"dns": map[string]any{"enable": true, "enhanced-mode": "fake-ip"},
+	})
+	checks := map[string]Check{}
+	for _, check := range report.Checks {
+		checks[check.ID] = check
+	}
+	if checks["dnsEnabled"].Status != "ok" || checks["dnsMode"].Message != "fake-ip" {
+		t.Fatalf("DNS runtime fallback = %#v", checks)
+	}
+}
+
+func TestFirewallSensitiveTUNStack(t *testing.T) {
+	if stack, ok := firewallSensitiveTUNStack(map[string]any{
+		"tun": map[string]any{"enable": true, "stack": "mixed"},
+	}); !ok || stack != "mixed" {
+		t.Fatalf("mixed TUN stack = %q, %v", stack, ok)
+	}
+	if _, ok := firewallSensitiveTUNStack(map[string]any{
+		"tun": map[string]any{"enable": true, "stack": "gvisor"},
+	}); ok {
+		t.Fatal("gvisor should not trigger a firewall compatibility hint")
+	}
+	if _, ok := firewallSensitiveTUNStack(map[string]any{
+		"tun": map[string]any{"enable": false, "stack": "system"},
+	}); ok {
+		t.Fatal("disabled TUN should not trigger a firewall compatibility hint")
+	}
+}
+
+func TestFirewallTUNPreflightDefaultsToGVisor(t *testing.T) {
+	report := Report{}
+	addFirewallTUNPreflightCheck(&report, "  GVISOR ")
+	if len(report.Checks) != 1 {
+		t.Fatalf("preflight checks = %#v", report.Checks)
+	}
+	if report.Checks[0].ID != "firewallTunCompatibility" || report.Checks[0].Status != "ok" || report.Checks[0].Message != "gvisor" {
+		t.Fatalf("preflight check = %#v", report.Checks[0])
+	}
+}
+
+func TestFileIdentityDetectsReplacement(t *testing.T) {
+	t.Run("unchanged", func(t *testing.T) {
+		path := writeExecutable(t, "mihomo", 0o700)
+		opened := openTestExecutable(t, path)
+		defer opened.Close()
+		if err := sameFileIdentity(path, opened); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("recreate", func(t *testing.T) {
+		path := writeExecutable(t, "mihomo", 0o700)
+		opened := openTestExecutable(t, path)
+		defer opened.Close()
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("replaced"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := sameFileIdentity(path, opened); err == nil {
+			t.Fatal("expected a deleted and recreated executable to fail the identity check")
+		}
+	})
+
+	t.Run("rename", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "mihomo")
+		if err := os.WriteFile(path, []byte("mihomo"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		opened := openTestExecutable(t, path)
+		defer opened.Close()
+		replacement := filepath.Join(dir, "replacement")
+		if err := os.WriteFile(replacement, []byte("other"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(replacement, path); err != nil {
+			t.Fatal(err)
+		}
+		if err := sameFileIdentity(path, opened); err == nil {
+			t.Fatal("expected an atomic rename replacement to fail the identity check")
+		}
+	})
+
+	t.Run("nonexecutable", func(t *testing.T) {
+		path := writeExecutable(t, "data", 0o600)
+		if _, err := openExecutable(path); err == nil {
+			t.Fatal("expected a non-executable file to be rejected")
+		}
+		executable := writeExecutable(t, "mihomo", 0o700)
+		opened := openTestExecutable(t, executable)
+		defer opened.Close()
+		if err := os.Chmod(executable, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := sameFileIdentity(executable, opened); err == nil {
+			t.Fatal("expected a file that lost its execute bit to be rejected")
+		}
+	})
+}
+
+func writeExecutable(t *testing.T, contents string, mode os.FileMode) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "mihomo")
+	if err := os.WriteFile(path, []byte(contents), mode); err != nil {
+		t.Fatal(err)
+	}
+	// WriteFile applies the process umask. The identity checks need the exact mode.
+	if err := os.Chmod(path, mode); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func openTestExecutable(t *testing.T, path string) *os.File {
+	t.Helper()
+	opened, err := openExecutable(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return opened
+}

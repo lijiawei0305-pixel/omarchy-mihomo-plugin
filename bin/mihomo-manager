@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Stable launcher for the Go profile/configuration manager.
+set -euo pipefail
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -n "${OMARCHY_MIHOMO_MANAGER_BIN:-}" ]]; then
+  exec "$OMARCHY_MIHOMO_MANAGER_BIN" "$@"
+fi
+for candidate in \
+  "${XDG_DATA_HOME:-$HOME/.local/share}/omarchy-mihomo/bin/omarchy-mihomo-manager" \
+  "$SELF_DIR/../manager/omarchy-mihomo-manager" \
+  "$SELF_DIR/omarchy-mihomo-manager"; do
+  if [[ -x "$candidate" ]]; then
+    if [[ -z "${MIHOMO_CTL:-}" && -x "$SELF_DIR/mihomo-ctl" ]]; then
+      export MIHOMO_CTL="$SELF_DIR/mihomo-ctl"
+    fi
+    exec "$candidate" "$@"
+  fi
+done
+printf '{"ok":false,"stage":"setup","error":"Mihomo profile setup is not complete"}\n'
+echo 'Mihomo profile setup is not complete; open the plugin and choose "Set up Mihomo" first' >&2
+exit 1

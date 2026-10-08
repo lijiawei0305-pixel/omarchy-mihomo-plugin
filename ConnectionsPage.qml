@@ -9,6 +9,7 @@ Item {
   property var svc: null
   property color fg: Color.popups.text
   property string fontFamily: Style.font.family
+  property var addRuleForDomain: null
 
   // Tells the panel's key catcher to stand down while the filter has focus.
   readonly property bool editing: filterField.activeFocus
@@ -38,6 +39,35 @@ Item {
   function scrollBy(delta) {
     listView.contentY = Math.max(0, Math.min(Math.max(0, listView.contentHeight - listView.height),
                                              listView.contentY + delta))
+  }
+
+  function openConnectionMenu(row, area, mouse) {
+    var domain = String(row && row.domain !== undefined ? row.domain : "").trim()
+    if (domain === "") {
+      var host = String(row && row.host || "").trim()
+      var firstColon = host.indexOf(":")
+      var lastColon = host.lastIndexOf(":")
+      if (firstColon >= 0 && firstColon === lastColon) host = host.slice(0, lastColon)
+      domain = host
+    }
+
+    var point = area.mapToItem(Overlay.overlay, mouse.x, mouse.y)
+    connectionContextMenu.title = String(row && row.host || "")
+    connectionContextMenu.domain = domain
+    connectionContextMenu.actionEnabled = root.svc && root.svc.managerInstalled
+      && !root.svc.profileMutating
+    connectionContextMenu.openAt(point.x, point.y)
+  }
+
+  RuleContextMenu {
+    id: connectionContextMenu
+    svc: root.svc
+    foreground: root.fg
+    fontFamily: root.fontFamily
+    onAddToRulesRequested: {
+      if (root.addRuleForDomain && connectionContextMenu.domain !== "")
+        root.addRuleForDomain(connectionContextMenu.domain)
+    }
   }
 
   PageHeader {
@@ -123,6 +153,12 @@ Item {
         id: connMouse
         anchors.fill: parent
         hoverEnabled: true
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        onPressed: function(mouse) {
+          if (mouse.button !== Qt.RightButton) return
+          root.openConnectionMenu(connRow.modelData, connMouse, mouse)
+          mouse.accepted = true
+        }
       }
 
       Column {

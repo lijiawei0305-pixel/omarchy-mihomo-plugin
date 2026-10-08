@@ -18,6 +18,17 @@ TARGET="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/$PLUGIN_ID"
 echo "==> validating manifest"
 omarchy plugin validate "$REPO"
 
+# The plugin host does not run install hooks. Build the dependency-free helper
+# during development when Go is available; release installations use the
+# explicit bin/install-manager path instead.
+if command -v go >/dev/null 2>&1; then
+  echo "==> building mihomo manager"
+  (cd "$REPO/manager" && go build -trimpath -o "$REPO/bin/omarchy-mihomo-manager" ./cmd/omarchy-mihomo-manager)
+  chmod 700 "$REPO/bin/omarchy-mihomo-manager"
+else
+  echo "==> Go not found; keeping the existing manager binary (if any)" >&2
+fi
+
 # qmllint needs the shell's QML modules mounted at `qs`, which is how Quickshell
 # exposes them at runtime. A throwaway symlink dir is the whole trick.
 if command -v /usr/lib/qt6/bin/qmllint >/dev/null; then
@@ -43,6 +54,7 @@ rsync -a --delete \
   --exclude 'DEVELOPING.md' \
   --exclude 'DEVELOPMENT.md' \
   --exclude 'MIGRATION-PROMPT.md' \
+  --exclude 'manager/.cache/' \
   "$REPO"/ "$TARGET"/
 
 # Saving under ~/.config/omarchy/plugins/ is supposed to hot-reload, but the
