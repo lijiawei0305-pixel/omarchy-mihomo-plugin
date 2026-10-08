@@ -357,6 +357,38 @@ sysproxy_status_json() {
     "$([[ "$UI_SYSPROXY" == on ]] && printf 'true' || printf 'false')"
 }
 
+# Read one numeric top-level field from Mihomo's /configs response. The
+# controller endpoint is JSON, but keeping this client dependency-free avoids
+# making jq/python part of the plugin contract.
+json_number_field() {
+  local json="$1" key="$2"
+  printf '%s' "$json" | sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p" | head -n1
+}
+
+tcp_listener_ready() {
+  local port="$1"
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 2 /usr/bin/bash -c "exec 3<>/dev/tcp/127.0.0.1/${port}" >/dev/null 2>&1
+  else
+    /usr/bin/bash -c "exec 3<>/dev/tcp/127.0.0.1/${port}" >/dev/null 2>&1
+  fi
+}
+
+sysproxy_host_is_local() {
+  case "$1" in
+    localhost|127.0.0.1|::1|'[::1]') return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+sysproxy_preflight() {
+  local port="$1" configs mixed
+  configs="$(request GET /configs)"
+  mixed="$(json_number_field "$configs" "mixed-port")"
+  [[ "$mixed" == "$port" ]] || fail "system proxy requires Mihomo mixed-port $port"
+  tcp_listener_ready "$port" || fail "Mihomo is not listening on mixed-port $port"
+}
+
 sysproxy_apply() {
   local host="$1" port="$2"
   local ok=0
@@ -414,13 +446,66 @@ curl_args() {
 
 request() {
   local method="$1" path="$2" body="${3:-}"
-  local args
+  local args response_file status_file status error
   curl_args args
-  args+=(--max-time "$TIMEOUT" --request "$method")
+  args+=(--max-time "$TIMEOUT" --request "$method"
+         --write-out $'\\n%{http_code}')
   if [[ -n "$body" ]]; then
     args+=(--header "Content-Type: application/json" --data "$body")
   fi
-  curl "${args[@]}" "$(base_url)$path"
+  response_file="$(mktemp)"
+  status_file="$(mktemp)"
+  if ! curl "${args[@]}" "$(base_url)$path" >"$response_file" 2>"$status_file"; then
+    error="$(cat "$status_file")"
+    rm -f "$status_file" "$response_file"
+    [[ -n "$error" ]] || error="controller request failed"
+    fail "$error"
+  fi
+  status="$(tail -n1 "$response_file")"
+  if [[ ! "$status" =~ ^[0-9]{3}$ ]]; then
+    error="$(cat "$response_file")"
+    rm -f "$status_file" "$response_file"
+    [[ -n "$error" ]] || error="controller returned an invalid response"
+    fail "$error"
+  fi
+  if [[ "$status" -lt 200 || "$status" -ge 300 ]]; then
+    rm -f "$status_file" "$response_file"
+    fail "controller returned HTTP $status"
+  fi
+  sed '$d' "$response_file"
+  rm -f "$status_file" "$response_file"
+}
+
+# A response body is kept until the status is checked; non-2xx responses never
+# reach JSON consumers.
+request_file() {
+  local method="$1" path="$2" file="$3"
+  local args response_file status_file status error
+  curl_args args
+  args+=(--max-time "$TIMEOUT" --request "$method"
+         --header "Content-Type: application/json" --data-binary "@$file"
+         --write-out $'\\n%{http_code}')
+  response_file="$(mktemp)"
+  status_file="$(mktemp)"
+  if ! curl "${args[@]}" "$(base_url)$path" >"$response_file" 2>"$status_file"; then
+    error="$(cat "$status_file")"
+    rm -f "$status_file" "$response_file"
+    [[ -n "$error" ]] || error="controller request failed"
+    fail "$error"
+  fi
+  status="$(tail -n1 "$response_file")"
+  if [[ ! "$status" =~ ^[0-9]{3}$ ]]; then
+    error="$(cat "$response_file")"
+    rm -f "$status_file" "$response_file"
+    [[ -n "$error" ]] || error="controller returned an invalid response"
+    fail "$error"
+  fi
+  if [[ "$status" -lt 200 || "$status" -ge 300 ]]; then
+    rm -f "$status_file" "$response_file"
+    fail "controller returned HTTP $status"
+  fi
+  sed '$d' "$response_file"
+  rm -f "$status_file" "$response_file"
 }
 
 # JSON-safe error envelope so the QML side always has something parseable.
@@ -448,23 +533,33 @@ or_null() {
 
 fetch_bundle() {
   local include_proxies="$1"
-  local dir version configs proxies
+  local dir version configs proxies version_pid configs_pid proxies_pid=""
+  local version_ok=0 configs_ok=0 proxies_ok=0
   dir="$(mktemp -d)"
-  request GET /version >"$dir/version" &
-  request GET /configs >"$dir/configs" &
+  request GET /version >"$dir/version" & version_pid=$!
+  request GET /configs >"$dir/configs" & configs_pid=$!
   if [[ "$include_proxies" == 1 ]]; then
-    request GET /proxies >"$dir/proxies" &
+    request GET /proxies >"$dir/proxies" & proxies_pid=$!
   fi
-  wait
+  # A failed request writes an error envelope to its file and exits non-zero.
+  # Treat that as "no data"; never hand the envelope to the UI as a live core.
+  if wait "$version_pid"; then version_ok=1; fi
+  if wait "$configs_pid"; then configs_ok=1; fi
+  if [[ -n "$proxies_pid" ]] && wait "$proxies_pid"; then proxies_ok=1; fi
+  if [[ "$version_ok" -ne 1 || ! -s "$dir/version" ]]; then
+    rm -rf "$dir"
+    fail "cannot reach mihomo (${SOURCE}: ${SOCKET:-$ADDRESS})"
+  fi
   version="$(cat "$dir/version")"
-  configs="$(cat "$dir/configs")"
-  if [[ "$include_proxies" == 1 ]]; then
+  configs=""
+  proxies=""
+  if [[ "$configs_ok" -eq 1 ]]; then
+    configs="$(cat "$dir/configs")"
+  fi
+  if [[ "$include_proxies" == 1 && "$proxies_ok" -eq 1 ]]; then
     proxies="$(cat "$dir/proxies")"
   fi
   rm -rf "$dir"
-  if [[ -z "$version" ]]; then
-    fail "cannot reach mihomo (${SOURCE}: ${SOCKET:-$ADDRESS})"
-  fi
   local sysproxy
   sysproxy="$(sysproxy_status_json)"
   if [[ "$include_proxies" == 1 ]]; then
@@ -476,11 +571,39 @@ fetch_bundle() {
   fi
 }
 
+coreinfo_json() {
+  local pid exe config_dir target transport
+  pid="$(core_pid)"
+  exe=""
+  config_dir=""
+  if [[ -n "$pid" && -r "/proc/$pid/exe" ]]; then
+    exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
+  fi
+  config_dir=""
+  if [[ -n "$(core_config_path 2>/dev/null || true)" ]]; then
+    config_dir="$(dirname "$(core_config_path)")"
+  fi
+  if [[ -n "$SOCKET" ]]; then
+    transport="unix"
+    target="$SOCKET"
+  else
+    transport="tcp"
+    target="$ADDRESS"
+  fi
+  printf '{"pid":%s,"exe":%s,"configPath":%s,"configDir":%s,"controllerTransport":%s,"controllerTarget":%s}\n' \
+    "${pid:-0}" "$(json_string "$exe")" "$(json_string "$(core_config_path 2>/dev/null || true)")" \
+    "$(json_string "$config_dir")" "$(json_string "$transport")" "$(json_string "$target")"
+}
+
 resolve
 command="${1:-}"
 [[ $# -gt 0 ]] && shift
 
 case "$command" in
+  coreinfo)
+    coreinfo_json
+    ;;
+
   endpoint)
     printf '{"transport":%s,"target":%s,"source":%s,"secret":%s}\n' \
       "$([[ -n "$SOCKET" ]] && printf '"unix"' || printf '"tcp"')" \
@@ -491,6 +614,7 @@ case "$command" in
 
   get)    request GET "${1:?path required}" ;;
   delete) request DELETE "${1:?path required}" ;;
+  put-file) request_file PUT "${1:?path required}" "${2:?JSON body file required}" ;;
   put)    request PUT "${1:?path required}" "${2:-}" ;;
   patch)  request PATCH "${1:?path required}" "${2:-}" ;;
   post)   request POST "${1:?path required}" "${2:-}" ;;
@@ -595,7 +719,9 @@ case "$command" in
         host="${2:-127.0.0.1}"
         port="${3:-}"
         [[ -n "$host" ]] || fail "sysproxy host required"
+        sysproxy_host_is_local "$host" || fail "system proxy host must be local"
         [[ "$port" =~ ^[1-9][0-9]*$ && "$port" -le 65535 ]] || fail "sysproxy port required"
+        sysproxy_preflight "$port"
         sysproxy_apply "$host" "$port"
         ;;
       off)

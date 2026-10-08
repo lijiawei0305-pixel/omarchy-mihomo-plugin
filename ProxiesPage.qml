@@ -51,7 +51,7 @@ Item {
     anchors.top: parent.top
     title: root.svc ? root.svc.t("proxiesTitle") : "Proxy groups"
     subtitle: root.svc
-      ? root.svc.t("groupsCount", root.visibleGroups.length, root.svc.modeLabel)
+      ? root.svc.t(root.visibleGroups.length === 1 ? "groupsCountOne" : "groupsCountMany", root.visibleGroups.length, root.svc.modeLabel)
       : ""
     foreground: root.fg
     fontFamily: root.fontFamily

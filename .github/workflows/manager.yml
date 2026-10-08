@@ -1,0 +1,99 @@
+name: manager
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Tests and plugin validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: manager/go.sum
+      - name: Go unit tests
+        run: go -C manager test ./...
+      - name: Go vet
+        run: go -C manager vet ./...
+      - name: Manager integration tests
+        run: ./tests/integration.sh
+      - name: Bootstrap setup tests
+        run: ./tests/bootstrap.sh
+      - name: System Proxy contract tests
+        run: ./tests/sysproxy.sh
+      - name: Security regression tests
+        run: ./tests/security-regressions.sh
+      - name: Validate plugin manifest
+        run: |
+          if command -v omarchy >/dev/null 2>&1; then
+            omarchy plugin validate .
+          else
+            ./tests/validate-plugin.sh
+          fi
+      - name: Check shell scripts
+        run: bash -n deploy bin/* tests/*.sh
+
+  build:
+    name: Build manager (${{ matrix.asset }})
+    needs: checks
+    if: startsWith(github.ref, 'refs/tags/v') && github.event_name != 'pull_request'
+    strategy:
+      matrix:
+        include:
+          - goarch: amd64
+            asset: omarchy-mihomo-manager-linux-amd64
+          - goarch: arm64
+            asset: omarchy-mihomo-manager-linux-arm64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: manager/go.sum
+      - run: go -C manager mod download
+      - run: CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.goarch }} go -C manager build -trimpath -ldflags='-s -w' -o "../${{ matrix.asset }}" ./cmd/omarchy-mihomo-manager
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+
+  checksums:
+    name: Checksums
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: omarchy-mihomo-manager-linux-*
+          merge-multiple: true
+      - run: cd dist && sha256sum omarchy-mihomo-manager-* > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: manager-release
+          path: dist
+
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v') && github.event_name != 'pull_request'
+    needs: checksums
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: manager-release
+          path: dist
+      - name: Publish manager release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" dist/* --repo "${GITHUB_REPOSITORY}"  --generate-notes --verify-tag

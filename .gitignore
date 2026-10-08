@@ -3,6 +3,11 @@
 *.jsc
 .qmlls.ini
 
+# Built locally by ./deploy; release artifacts are downloaded explicitly.
+# Local test/build outputs
+manager/omarchy-mihomo-manager
+bin/omarchy-mihomo-manager
+
 # Local notes — do not publish
 CHANGELOG.md
 DEVELOPING.md

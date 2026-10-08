@@ -19,8 +19,9 @@ rg -q 'onClicked: if \(root\.svc\) root\.svc\.testGroup\(card\.groupName\)' "$RO
   || fail "group test click is not null-safe"
 rg -q -U 'onClicked: function\(mouse\) \{\n[[:space:]]+if \(!root\.svc\) return\n' "$ROOT/ProxiesPage.qml" \
   || fail "node click is not null-safe"
-rg -q 'root\.filter !== "" \? \(root\.svc \? root\.svc\.t\("noMatchRules"\) : ""\)' "$ROOT/RulesPage.qml" \
+rg -q -U 'text: root\.svc\n[[:space:]]+\? root\.svc\.t\(root\.filter\.trim\(\) === "" \? "noRules" : "noMatchRules"\)' "$ROOT/RulesPage.qml" \
   || fail "rules empty-state calls t() when svc is null"
+rg -q 'No rules match\.' "$ROOT/RulesPage.qml" || fail "rules empty-state has no null fallback"
 # The startup TypeError was the unguarded else branch.
 rg -q ': \(root\.svc \? root\.svc\.t\("notConnected"\) : ""\)' "$ROOT/ProxiesPage.qml" \
   || fail "proxies empty-state calls t() when svc is null"

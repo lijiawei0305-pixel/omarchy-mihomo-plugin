@@ -187,6 +187,10 @@ Item {
           model: root.options
           currentIndex: -1
 
+          ScrollBar.vertical: ScrollBar {
+            policy: ScrollBar.AsNeeded
+          }
+
           function indexOfValue(v) {
             for (var i = 0; i < root.options.length; i++)
               if (root.optionValue(root.options[i]) === v) return i

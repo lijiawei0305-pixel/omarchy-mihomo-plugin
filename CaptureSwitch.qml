@@ -25,7 +25,7 @@ Row {
     fontSize: Style.font.bodySmall
     bordered: true
     active: root.sysOn
-    enabled: root.svc !== null && root.svc.connected
+    enabled: root.svc !== null && root.svc.connected && root.svc.systemProxyPort > 0
     onClicked: root.svc.setSysproxy(!root.sysOn)
   }
 

@@ -1,0 +1,7 @@
+mixed-port: 7890
+dns:
+  enable: false
+  nameserver: [8.8.8.8]
+tun:
+  enable: false
+proxies: []
