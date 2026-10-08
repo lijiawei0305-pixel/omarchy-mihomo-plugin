@@ -10,6 +10,8 @@ echo "==> source contract"
 rg -q 'singleton ServiceStore 1\.0 ServiceStore\.qml' "$ROOT/qmldir" || fail "qmldir does not register ServiceStore"
 rg -q 'pragma Singleton' "$ROOT/ServiceStore.qml" || fail "ServiceStore is not a singleton"
 rg -q 'ServiceStore\.instance = root' "$ROOT/Service.qml" || fail "Service does not publish itself"
+rg -q 'if \(!ready \|\| readyWorkStarted\) return' "$ROOT/Service.qml" \
+  || fail "startReadyWork can run twice on the initial ready=true"
 rg -q 'Qt\.resolvedUrl\("\."\)' "$ROOT/Service.qml" || fail "pluginDir does not use Qt.resolvedUrl"
 rg -q 'ready: runner !== ""' "$ROOT/Service.qml" || fail "ready is not gated on the runner path"
 rg -q 'ServiceStore\.instance' "$ROOT/MihomoPanel.qml" || fail "panel does not read ServiceStore"
@@ -170,9 +172,15 @@ Item {
         var probe = probeComp.createObject(this, { expected: path })
         if (!probe.pathOk || !probe.siblingOk || !probe.storeOk) Qt.exit(5)
         if (!watcher.svc || watcher.svc.marker !== "probe") Qt.exit(6)
+        var replacement = probeComp.createObject(this, { expected: path })
+        if (!replacement || watcher.svc !== replacement) Qt.exit(8)
         probe.destroy()
         Qt.callLater(function() {
-            Qt.exit(watcher.svc === null ? 0 : 7)
+            if (watcher.svc !== replacement) Qt.exit(9)
+            replacement.destroy()
+            Qt.callLater(function() {
+                Qt.exit(watcher.svc === null ? 0 : 7)
+            })
         })
     }
 }
@@ -187,4 +195,44 @@ if [[ $launch_status -ne 0 ]]; then
   fail "ServiceStore/pluginDir probe failed"
 fi
 echo "    ServiceStore and pluginDir ok"
+
+echo "==> ready startup runs once"
+cat > "$WORK/ready-once.qml" << 'EOF'
+import QtQuick
+Item {
+    property var manifest: null
+    readonly property string pluginDir: manifest && manifest.__sourceDir ? String(manifest.__sourceDir) : "/plugins/demo"
+    readonly property string runner: pluginDir + "/bin/mihomo-ctl"
+    readonly property bool ready: runner !== ""
+    property bool readyWorkStarted: false
+    property int starts: 0
+    function startReadyWork() {
+        if (!ready || readyWorkStarted) return
+        readyWorkStarted = true
+        starts = starts + 1
+    }
+    onReadyChanged: {
+        if (!ready) {
+            readyWorkStarted = false
+            return
+        }
+        startReadyWork()
+    }
+    Component.onCompleted: {
+        if (ready) startReadyWork()
+        manifest = ({ __sourceDir: "/from-host" })
+        Qt.callLater(function() { Qt.exit(starts === 1 ? 0 : starts) })
+    }
+}
+EOF
+set +e
+QT_QPA_PLATFORM=offscreen qml6 "$WORK/ready-once.qml" >"$WORK/ready-once.out" 2>"$WORK/ready-once.err"
+ready_status=$?
+set -e
+if [[ $ready_status -ne 0 ]]; then
+  echo "ready-once exit $ready_status" >&2
+  cat "$WORK/ready-once.out" "$WORK/ready-once.err" >&2 || true
+  fail "initial ready=true started work $ready_status times"
+fi
+echo "    ready startup ok"
 echo "PASS"

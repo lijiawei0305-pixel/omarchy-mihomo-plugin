@@ -104,6 +104,8 @@ Item {
   property bool hadConnection: false
   property bool managerReconcilePending: false
   property bool managerInitialReconcileDone: false
+  // onReadyChanged and onCompleted can both see the initial ready=true.
+  property bool readyWorkStarted: false
   property bool coreRefreshPending: false
   property string lastError: ""
   property string version: ""
@@ -1419,6 +1421,11 @@ Item {
   // --- lifecycle -----------------------------------------------------------
 
   function startReadyWork() {
+    // A second call while the first startup is still armed would set
+    // Process.targetRunning and run endpoint, language, setup, and profile
+    // checks again when the first process exits.
+    if (!ready || readyWorkStarted) return
+    readyWorkStarted = true
     managerInitialReconcileDone = false
     endpointProc.running = true
     langProc.running = true
@@ -1430,8 +1437,6 @@ Item {
 
   Component.onCompleted: {
     ServiceStore.instance = root
-    // ready is true as soon as the plugin directory resolves, so this change
-    // handler does not run on first load.
     if (ready) startReadyWork()
   }
 
@@ -1454,7 +1459,10 @@ Item {
   onActiveProfileChanged: syncSetupState()
 
   onReadyChanged: {
-    if (!ready) return
+    if (!ready) {
+      readyWorkStarted = false
+      return
+    }
     startReadyWork()
   }
 
