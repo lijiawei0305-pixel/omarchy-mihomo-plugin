@@ -223,6 +223,7 @@ go -C manager vet ./...
 ./tests/integration.sh
 ./tests/bootstrap.sh
 ./tests/sysproxy.sh
+./tests/security-regressions.sh
 ./tests/validate-plugin.sh
 bash -n deploy bin/* tests/*.sh
 omarchy plugin validate .

@@ -460,8 +460,11 @@ tun:
 	if !ok {
 		t.Fatalf("tun is not a map: %#v", compiled["tun"])
 	}
-	if tun["mtu"] != 1500 || tun["auto-redirect"] != true {
+	if tun["mtu"] != 1500 {
 		t.Fatalf("managed TUN removed unknown fields: %#v", tun)
+	}
+	if tun["auto-redirect"] != false {
+		t.Fatalf("managed TUN kept subscription auto-redirect: %#v", tun)
 	}
 	route, ok := tun["route"].(map[string]any)
 	if !ok || route["strict-route"] != true {
@@ -548,5 +551,89 @@ rules:
 		if gotRules[i] != want[i] {
 			t.Fatalf("compiled rule %d = %#v, want %#v", i, gotRules[i], want[i])
 		}
+	}
+}
+
+func TestUntrustedSubscriptionCannotExposeControllerOrLAN(t *testing.T) {
+	source := []byte(`mode: rule
+allow-lan: true
+bind-address: '*'
+secret: attacker-secret
+external-controller: 0.0.0.0:9090
+tun:
+  enable: true
+  auto-redirect: true
+  mtu: 1400
+listeners:
+  - name: mixed-in
+    type: mixed
+    port: 7892
+    listen: 0.0.0.0
+`)
+	out, err := (Compiler{Settings: profile.DefaultSettings(), Protected: map[string]any{
+		"external-controller": "127.0.0.1:9090",
+		"secret":              "keep",
+	}}).Compile(CompileInput{Source: source, UntrustedSource: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := Parse(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := compiled["allow-lan"]; ok {
+		t.Fatalf("subscription allow-lan survived: %#v", compiled["allow-lan"])
+	}
+	if _, ok := compiled["bind-address"]; ok {
+		t.Fatalf("subscription bind-address survived: %#v", compiled["bind-address"])
+	}
+	if compiled["secret"] != "keep" || compiled["external-controller"] != "127.0.0.1:9090" {
+		t.Fatalf("controller fields = secret %#v controller %#v", compiled["secret"], compiled["external-controller"])
+	}
+	tun, ok := compiled["tun"].(map[string]any)
+	if !ok || tun["auto-redirect"] != false || tun["enable"] != false || tun["mtu"] != 1400 {
+		t.Fatalf("tun = %#v", compiled["tun"])
+	}
+	listeners, ok := compiled["listeners"].([]any)
+	if !ok || len(listeners) != 1 {
+		t.Fatalf("listeners = %#v", compiled["listeners"])
+	}
+	listener, ok := listeners[0].(map[string]any)
+	if !ok || listener["listen"] != "127.0.0.1" {
+		t.Fatalf("listener = %#v", listeners[0])
+	}
+}
+
+func TestUntrustedSourceStillHonorsUserAllowLANOverride(t *testing.T) {
+	out, err := (Compiler{Settings: profile.DefaultSettings()}).Compile(CompileInput{
+		Source:          []byte("allow-lan: true\nmode: rule\n"),
+		ProfileOverride: []byte("allow-lan: true\n"),
+		UntrustedSource: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := Parse(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compiled["allow-lan"] != true {
+		t.Fatalf("user override allow-lan = %#v", compiled["allow-lan"])
+	}
+}
+
+func TestTrustedLocalSourceKeepsAllowLAN(t *testing.T) {
+	out, err := (Compiler{Settings: profile.DefaultSettings()}).Compile(CompileInput{
+		Source: []byte("allow-lan: true\nmode: rule\n"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := Parse(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compiled["allow-lan"] != true {
+		t.Fatalf("local allow-lan = %#v", compiled["allow-lan"])
 	}
 }

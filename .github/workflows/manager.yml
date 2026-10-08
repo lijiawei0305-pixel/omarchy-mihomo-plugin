@@ -28,6 +28,8 @@ jobs:
         run: ./tests/bootstrap.sh
       - name: System Proxy contract tests
         run: ./tests/sysproxy.sh
+      - name: Security regression tests
+        run: ./tests/security-regressions.sh
       - name: Validate plugin manifest
         run: |
           if command -v omarchy >/dev/null 2>&1; then

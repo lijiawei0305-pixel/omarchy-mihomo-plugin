@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/lijiawei0305-pixel/omarchy-mihomo-plugin/manager/internal/policy"
 	"github.com/lijiawei0305-pixel/omarchy-mihomo-plugin/manager/internal/profile"
@@ -22,6 +23,9 @@ type CompileInput struct {
 	Bindings        policy.Bindings
 	Settings        profile.Settings
 	Protected       map[string]any
+	// UntrustedSource is set for subscription documents. Local imports and
+	// user overrides remain authoritative for fields this layer removes.
+	UntrustedSource bool
 }
 
 func MergeLayers(source, global, override []byte) (map[string]any, error) {
@@ -41,10 +45,22 @@ func MergeLayers(source, global, override []byte) (map[string]any, error) {
 }
 
 func (c Compiler) Compile(input CompileInput) ([]byte, error) {
-	out, err := MergeLayers(input.Source, input.GlobalOverride, input.ProfileOverride)
+	src, err := Parse(input.Source)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse source: %w", err)
 	}
+	if input.UntrustedSource {
+		sanitizeUntrustedSource(src)
+	}
+	global, err := ParseOptional(input.GlobalOverride)
+	if err != nil {
+		return nil, fmt.Errorf("parse global override: %w", err)
+	}
+	profileOverride, err := ParseOptional(input.ProfileOverride)
+	if err != nil {
+		return nil, fmt.Errorf("parse profile override: %w", err)
+	}
+	out := DeepMerge(DeepMerge(src, global), profileOverride)
 	updated, err := rules.Inject(out, input.CustomRules, input.Bindings)
 	if err != nil {
 		return nil, fmt.Errorf("inject custom rules: %w", err)
@@ -126,6 +142,9 @@ func (c Compiler) managed(m map[string]any) map[string]any {
 			"auto-detect-interface": c.Settings.TUN.AutoDetectInterface,
 			"strict-route":          c.Settings.TUN.StrictRoute,
 			"dns-hijack":            toAny(c.Settings.TUN.DNSHijack),
+			// auto-redirect installs host firewall rules. Managed mode keeps
+			// that off; a subscription cannot turn it on by surviving the merge.
+			"auto-redirect": false,
 		}
 		// TUN has the same forward-compatibility requirement: preserve fields
 		// such as mtu, auto-redirect, and route include/exclude settings.
@@ -156,6 +175,63 @@ func toAny(s []string) []any {
 	}
 	return a
 }
+
+// sanitizeUntrustedSource removes control-plane fields from a downloaded
+// subscription before user overrides are merged. The stored source document
+// is left unchanged.
+func sanitizeUntrustedSource(m map[string]any) {
+	for _, key := range []string{
+		"allow-lan",
+		"bind-address",
+		"lan-allowed-ips",
+		"lan-disallowed-ips",
+		"authentication",
+		"skip-auth-prefixes",
+		"external-controller",
+		"external-controller-unix",
+		"external-controller-pipe",
+		"external-controller-tls",
+		"external-controller-cors",
+		"secret",
+		"external-ui",
+		"external-ui-name",
+		"external-ui-url",
+	} {
+		delete(m, key)
+	}
+	if tun, ok := m["tun"].(map[string]any); ok {
+		delete(tun, "auto-redirect")
+	}
+	sanitizeListeners(m)
+}
+
+func sanitizeListeners(m map[string]any) {
+	raw, ok := m["listeners"].([]any)
+	if !ok {
+		return
+	}
+	for _, item := range raw {
+		listener, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		listen, ok := listener["listen"].(string)
+		if !ok || strings.TrimSpace(listen) == "" || loopbackListen(listen) {
+			continue
+		}
+		listener["listen"] = "127.0.0.1"
+	}
+}
+
+func loopbackListen(value string) bool {
+	switch strings.ToLower(strings.Trim(strings.TrimSpace(value), "[]")) {
+	case "127.0.0.1", "localhost", "::1":
+		return true
+	default:
+		return false
+	}
+}
+
 func ReadProtected(path string) (map[string]any, error) {
 	if path == "" {
 		return map[string]any{}, nil

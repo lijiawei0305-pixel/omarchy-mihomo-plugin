@@ -1135,6 +1135,9 @@ Item {
     }
     for (var i = 0; i < checks.length; i++) {
       var check = checks[i]
+      // Raw Config mode used to enable TUN without getcap. Missing libcap is
+      // not proof the core lacks permission (it may be root), so do not block.
+      if (check.id === "tunCapability" && check.messageKey === "diagnosticGetcapUnavailable") continue
       if ((check.id === "tunCapability" || check.id === "firewallTunCompatibility")
           && check.status !== "ok") {
         tunPreflightLoading = false

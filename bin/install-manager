@@ -3,6 +3,14 @@ set -euo pipefail
 # Explicit installer: no profile action downloads software implicitly.
 VERSION="${OMARCHY_MIHOMO_MANAGER_VERSION:-latest}"
 REPO="${OMARCHY_MIHOMO_MANAGER_REPO:-lijiawei0305-pixel/omarchy-mihomo-plugin}"
+if [[ ! "$REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+  echo "invalid manager repository" >&2
+  exit 1
+fi
+if [[ "$VERSION" != "latest" && ! "$VERSION" =~ ^[A-Za-z0-9._+-]+$ ]]; then
+  echo "invalid manager version" >&2
+  exit 1
+fi
 arch="$(uname -m)"
 case "$arch" in x86_64|amd64) asset="omarchy-mihomo-manager-linux-amd64";; aarch64|arm64) asset="omarchy-mihomo-manager-linux-arm64";; *) echo "unsupported architecture: $arch" >&2; exit 1;; esac
 if [[ "$VERSION" == "latest" ]]; then
@@ -11,9 +19,14 @@ else
   base="https://github.com/$REPO/releases/download/$VERSION"
 fi
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-curl --fail --location --max-time 30 -o "$tmp/$asset" "$base/$asset"
-curl --fail --location --max-time 30 -o "$tmp/SHA256SUMS" "$base/SHA256SUMS"
-(cd "$tmp" && grep "  $asset$" SHA256SUMS | sha256sum -c -)
+curl --fail --location --proto '=https' --proto-redir '=https' --max-time 30 -o "$tmp/$asset" "$base/$asset"
+curl --fail --location --proto '=https' --proto-redir '=https' --max-time 30 -o "$tmp/SHA256SUMS" "$base/SHA256SUMS"
+matches="$(grep -cE "^[0-9a-fA-F]{64}  ${asset}$" "$tmp/SHA256SUMS" || true)"
+if [[ "$matches" != "1" ]]; then
+  echo "SHA256SUMS must contain exactly one checksum for ${asset}" >&2
+  exit 1
+fi
+(cd "$tmp" && grep -E "^[0-9a-fA-F]{64}  ${asset}$" SHA256SUMS | sha256sum -c -)
 dest="${XDG_DATA_HOME:-$HOME/.local/share}/omarchy-mihomo/bin"
 mkdir -p "$dest"; chmod 700 "$dest"; install -m 700 "$tmp/$asset" "$dest/omarchy-mihomo-manager"
 echo "installed $dest/omarchy-mihomo-manager"

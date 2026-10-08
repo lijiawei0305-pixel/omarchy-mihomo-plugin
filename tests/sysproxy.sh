@@ -84,6 +84,12 @@ for _ in $(seq 1 20); do
   sleep 0.05
 done
 
+if "$ROOT/bin/mihomo-ctl" sysproxy on evil.example "$PORT" >"$TMP/out" 2>"$TMP/err"; then
+  echo "expected non-local system proxy host to be rejected" >&2
+  exit 1
+fi
+grep -Fq "system proxy host must be local" "$TMP/out"
+
 result="$($ROOT/bin/mihomo-ctl sysproxy on 127.0.0.1 "$PORT")"
 grep -Fq '"ok":true' <<<"$result"
 

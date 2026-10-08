@@ -374,6 +374,13 @@ tcp_listener_ready() {
   fi
 }
 
+sysproxy_host_is_local() {
+  case "$1" in
+    localhost|127.0.0.1|::1|'[::1]') return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 sysproxy_preflight() {
   local port="$1" configs mixed
   configs="$(request GET /configs)"
@@ -526,23 +533,33 @@ or_null() {
 
 fetch_bundle() {
   local include_proxies="$1"
-  local dir version configs proxies
+  local dir version configs proxies version_pid configs_pid proxies_pid=""
+  local version_ok=0 configs_ok=0 proxies_ok=0
   dir="$(mktemp -d)"
-  request GET /version >"$dir/version" &
-  request GET /configs >"$dir/configs" &
+  request GET /version >"$dir/version" & version_pid=$!
+  request GET /configs >"$dir/configs" & configs_pid=$!
   if [[ "$include_proxies" == 1 ]]; then
-    request GET /proxies >"$dir/proxies" &
+    request GET /proxies >"$dir/proxies" & proxies_pid=$!
   fi
-  wait
+  # A failed request writes an error envelope to its file and exits non-zero.
+  # Treat that as "no data"; never hand the envelope to the UI as a live core.
+  if wait "$version_pid"; then version_ok=1; fi
+  if wait "$configs_pid"; then configs_ok=1; fi
+  if [[ -n "$proxies_pid" ]] && wait "$proxies_pid"; then proxies_ok=1; fi
+  if [[ "$version_ok" -ne 1 || ! -s "$dir/version" ]]; then
+    rm -rf "$dir"
+    fail "cannot reach mihomo (${SOURCE}: ${SOCKET:-$ADDRESS})"
+  fi
   version="$(cat "$dir/version")"
-  configs="$(cat "$dir/configs")"
-  if [[ "$include_proxies" == 1 ]]; then
+  configs=""
+  proxies=""
+  if [[ "$configs_ok" -eq 1 ]]; then
+    configs="$(cat "$dir/configs")"
+  fi
+  if [[ "$include_proxies" == 1 && "$proxies_ok" -eq 1 ]]; then
     proxies="$(cat "$dir/proxies")"
   fi
   rm -rf "$dir"
-  if [[ -z "$version" ]]; then
-    fail "cannot reach mihomo (${SOURCE}: ${SOCKET:-$ADDRESS})"
-  fi
   local sysproxy
   sysproxy="$(sysproxy_status_json)"
   if [[ "$include_proxies" == 1 ]]; then
@@ -702,6 +719,7 @@ case "$command" in
         host="${2:-127.0.0.1}"
         port="${3:-}"
         [[ -n "$host" ]] || fail "sysproxy host required"
+        sysproxy_host_is_local "$host" || fail "system proxy host must be local"
         [[ "$port" =~ ^[1-9][0-9]*$ && "$port" -le 65535 ]] || fail "sysproxy port required"
         sysproxy_preflight "$port"
         sysproxy_apply "$host" "$port"

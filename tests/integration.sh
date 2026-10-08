@@ -91,6 +91,32 @@ proxy-groups:
 rules:
   - MATCH,Select
 YAML
+cat >"$FAKE/http/exposed.yaml" <<'YAML'
+port: 7891
+mode: rule
+log-level: exposed
+allow-lan: true
+bind-address: '*'
+external-controller: 0.0.0.0:9090
+secret: attacker-secret
+tun:
+  enable: true
+  auto-redirect: true
+listeners:
+  - name: mixed-in
+    type: mixed
+    port: 7892
+    listen: 0.0.0.0
+proxies:
+  - name: DIRECT
+    type: direct
+proxy-groups:
+  - name: Select
+    type: select
+    proxies: [DIRECT]
+rules:
+  - MATCH,Select
+YAML
 
 cat >"$FAKE/http/server.py" <<'PY'
 import http.server
@@ -110,6 +136,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             name, tag = "c.yaml", None
         elif route == "/etag":
             name, tag = "etag.yaml", "etag-v1"
+        elif route == "/exposed":
+            name, tag = "exposed.yaml", None
         elif route == "/bad":
             body = b"not: [valid\n"
             self.send_response(200)
@@ -459,5 +487,22 @@ fi
 OMARCHY_MIHOMO_HOME="$STORE2" "$MANAGER" policy binding set "$C_ID" proxy 'Proxy C' >/dev/null
 OMARCHY_MIHOMO_HOME="$STORE2" "$MANAGER" profile select "$C_ID" >/dev/null
 assert_file_contains "$FAKE_LIVE_CONFIG" 'DOMAIN-SUFFIX,openai.com,Proxy C'
+
+# A hostile subscription must not publish the proxy, replace the controller,
+# or enable firewall redirect. The downloaded source stays intact.
+EX_JSON="$(OMARCHY_MIHOMO_HOME="$STORE" "$MANAGER" profile add --url "http://127.0.0.1:$PORT/exposed" --name Exposed)"
+EX_ID="$(printf '%s' "$EX_JSON" | get_id)"
+OMARCHY_MIHOMO_HOME="$STORE" "$MANAGER" profile select "$EX_ID" >/dev/null
+assert_file_contains "$STORE/profiles/$EX_ID/source.yaml" 'allow-lan: true'
+assert_file_contains "$STORE/profiles/$EX_ID/source.yaml" 'attacker-secret'
+assert_file_contains "$STORE/profiles/$EX_ID/source.yaml" 'auto-redirect: true'
+assert_file_contains "$FAKE_LIVE_CONFIG" 'log-level: exposed'
+assert_file_contains "$FAKE_LIVE_CONFIG" 'external-controller: 127.0.0.1:9090'
+assert_file_contains "$FAKE_LIVE_CONFIG" 'secret: test-secret'
+assert_file_contains "$FAKE_LIVE_CONFIG" 'auto-redirect: false'
+if grep -Fq 'attacker-secret' "$FAKE_LIVE_CONFIG" || grep -Fq 'allow-lan: true' "$FAKE_LIVE_CONFIG" || grep -Fq '0.0.0.0' "$FAKE_LIVE_CONFIG"; then
+  echo 'subscription exposure settings reached the runtime config' >&2
+  exit 1
+fi
 
 printf 'manager integration tests: PASS\n'

@@ -125,3 +125,80 @@ func TestSafeDialRejectsPrivateResolvedHost(t *testing.T) {
 		t.Fatal("expected the custom dialer to reject a private DNS result")
 	}
 }
+
+func TestBlockedSpecialPurposeAddresses(t *testing.T) {
+	blocked := []string{
+		"0.0.0.0", "0.0.0.1", "10.1.2.3", "100.64.0.1", "127.0.0.1", "169.254.169.254",
+		"172.16.0.1", "192.0.2.1", "192.168.1.1", "198.18.0.1", "198.51.100.1", "203.0.113.1",
+		"224.0.0.1", "255.255.255.255", "::", "::1", "::ffff:127.0.0.1", "::ffff:10.0.0.1",
+		"::7f00:1", "2002:7f00:1::", "64:ff9b::7f00:1", "64:ff9b:1::", "2001:db8::1", "fd00::1",
+	}
+	for _, host := range blocked {
+		if ip := net.ParseIP(host); ip == nil || !isBlockedIP(ip) {
+			t.Fatalf("expected %s to be blocked", host)
+		}
+	}
+	allowed := []string{"1.1.1.1", "8.8.8.8", "9.9.9.9", "2606:4700:4700::1111", "2002:0101:0101::"}
+	for _, host := range allowed {
+		if ip := net.ParseIP(host); ip == nil || isBlockedIP(ip) {
+			t.Fatalf("expected %s to stay reachable", host)
+		}
+	}
+	for _, rawURL := range []string{
+		"http://0.0.0.1/latest?token=secret",
+		"http://100.64.0.1/",
+		"http://169.254.169.254/latest?token=secret",
+		"http://198.18.0.1/",
+		"http://[::ffff:127.0.0.1]/",
+		"http://[::7f00:1]/",
+		"http://[2002:7f00:1::]/",
+		"http://[64:ff9b::7f00:1]/",
+		"http://metadata.google.internal/latest?token=secret",
+	} {
+		if _, err := Fetch(rawURL, "", "", "", false, 0); err == nil {
+			t.Fatalf("expected %s to be rejected", rawURL)
+		} else if containsSecret(err.Error()) {
+			t.Fatalf("token leaked for %s: %v", rawURL, err)
+		}
+	}
+}
+
+func TestRedirectToPrivateAddressIsRejected(t *testing.T) {
+	old := allowPrivateHosts
+	allowPrivateHosts = true
+	defer func() { allowPrivateHosts = old }()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://10.1.2.3/latest?token=secret", http.StatusFound)
+	}))
+	defer srv.Close()
+	if _, err := Fetch(srv.URL, "", "", "", false, 0); err == nil {
+		t.Fatal("expected redirect to a private address to be rejected")
+	} else if containsSecret(err.Error()) {
+		t.Fatalf("token leaked: %v", err)
+	}
+}
+
+func TestDialRechecksDNSRebinding(t *testing.T) {
+	oldAllow := allowPrivateHosts
+	oldLookup := lookupIP
+	allowPrivateHosts = false
+	var lookups int
+	lookupIP = func(context.Context, string) ([]net.IPAddr, error) {
+		lookups++
+		if lookups == 1 {
+			return []net.IPAddr{{IP: net.ParseIP("1.1.1.1")}}, nil
+		}
+		return []net.IPAddr{{IP: net.ParseIP("10.0.0.1")}}, nil
+	}
+	defer func() {
+		allowPrivateHosts = oldAllow
+		lookupIP = oldLookup
+	}()
+	_, err := Fetch("https://subscription.example.test/sub?token=secret", "", "", "", false, 0)
+	if err == nil {
+		t.Fatal("expected dial-time rebinding to be rejected")
+	}
+	if containsSecret(err.Error()) {
+		t.Fatalf("token leaked: %v", err)
+	}
+}

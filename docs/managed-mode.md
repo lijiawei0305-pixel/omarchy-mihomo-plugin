@@ -109,7 +109,12 @@ removes a source `port` or `socks-port` when it duplicates the managed
 are not implicitly changed.
 
 Managed TUN defaults to `enable: false` and `stack: gvisor`. The compiler does
-not enable TUN as a side effect of importing a profile.
+not enable TUN as a side effect of importing a profile. Managed mode also forces
+`tun.auto-redirect: false`, so enabling TUN does not install host firewall
+redirect rules. A downloaded subscription cannot set `allow-lan`, `bind-address`,
+the external controller, or a non-loopback inbound `listen` address. User
+overrides can still set `allow-lan`. The stored subscription source is not
+rewritten.
 
 ## Apply transaction
 
@@ -147,6 +152,8 @@ Subscription fetching is deliberately constrained:
   and unspecified addresses are rejected;
 * DNS results are checked before connecting;
 * every redirect destination is checked and redirect count is bounded;
+* shared, documentation, benchmarking, and transition addresses that embed a blocked IPv4 address are rejected, along with the metadata hostname;
+* the test-only loopback switch does not permit LAN or link-local destinations;
 * requests have a 30-second timeout and a 16 MiB response limit;
 * ETag/conditional requests may avoid downloading an unchanged subscription;
 * errors redact subscription URLs and their tokens before returning or logging

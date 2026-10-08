@@ -366,7 +366,7 @@ func addProfile(args []string) {
 	if _, err = config.Parse(result.Body); err != nil {
 		fail("parse", err)
 	}
-	if err = validateCompiled(result.Body, []byte("{}\n")); err != nil {
+	if err = validateCompiled(result.Body, []byte("{}\n"), true); err != nil {
 		fail("validate", err)
 	}
 	id, err := store.RandomID()
@@ -466,7 +466,7 @@ func importCurrent(args []string) {
 	if _, err = config.Parse(source); err != nil {
 		fail("parse", err)
 	}
-	if err = validateCompiled(source, []byte("{}\n")); err != nil {
+	if err = validateCompiled(source, []byte("{}\n"), false); err != nil {
 		fail("validate", err)
 	}
 	id, err := store.RandomID()
@@ -513,7 +513,7 @@ func importFile(args []string) {
 	if _, err = config.Parse(source); err != nil {
 		fail("parse", err)
 	}
-	if err = validateCompiled(source, []byte("{}\n")); err != nil {
+	if err = validateCompiled(source, []byte("{}\n"), false); err != nil {
 		fail("validate", err)
 	}
 	id, err := store.RandomID()
@@ -1002,8 +1002,12 @@ func readGlobalOverride() ([]byte, error) {
 }
 
 func prepareCompile(id string, source []byte, options compileOptions) (compilePlan, error) {
+	meta, err := profile.LoadMeta(st, id)
+	if err != nil {
+		return compilePlan{}, err
+	}
+	untrusted := meta.Type == "remote"
 	if source == nil {
-		var err error
 		source, err = profile.ReadSource(st, id)
 		if err != nil {
 			return compilePlan{}, err
@@ -1059,20 +1063,20 @@ func prepareCompile(id string, source []byte, options compileOptions) (compilePl
 		}
 		options.bindings = bindings
 		options.bindingsSet = true
-		plan, err := compileWithOptions(source, global, override, custom, bindings, options.settings)
+		plan, err := compileWithOptions(source, global, override, custom, bindings, options.settings, untrusted)
 		if err != nil {
 			return compilePlan{}, err
 		}
 		return compilePlan{compiled: plan, bindings: bindings, bindingChanged: changed}, nil
 	}
-	compiled, err := compileWithOptions(source, global, override, custom, bindings, options.settings)
+	compiled, err := compileWithOptions(source, global, override, custom, bindings, options.settings, untrusted)
 	if err != nil {
 		return compilePlan{}, err
 	}
 	return compilePlan{compiled: compiled, bindings: bindings}, nil
 }
 
-func compileWithOptions(source, global, override []byte, custom []rules.Rule, bindings policy.Bindings, settingsOverride *profile.Settings) ([]byte, error) {
+func compileWithOptions(source, global, override []byte, custom []rules.Rule, bindings policy.Bindings, settingsOverride *profile.Settings, untrusted bool) ([]byte, error) {
 	settings := settingsOverride
 	if settings == nil {
 		loaded, err := profile.LoadSettings(st)
@@ -1088,6 +1092,7 @@ func compileWithOptions(source, global, override []byte, custom []rules.Rule, bi
 	return (config.Compiler{}).Compile(config.CompileInput{
 		Source: source, GlobalOverride: global, ProfileOverride: override,
 		CustomRules: custom, Bindings: bindings, Settings: *settings, Protected: protected,
+		UntrustedSource: untrusted,
 	})
 }
 
@@ -1127,18 +1132,27 @@ func protectedController() (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	info, err := core.CoreInfo()
-	if err == nil && info.ConfigPath != "" {
+	info, infoErr := core.CoreInfo()
+	if infoErr == nil && info.ConfigPath != "" {
 		protected, readErr := config.ReadProtected(info.ConfigPath)
 		if readErr == nil {
-			return protected, nil
+			return withLiveController(protected, info), nil
 		}
-		if !exists || state.Protected == nil {
-			return nil, fmt.Errorf("read running config for protected fields: %w", readErr)
+		if exists && state.Protected != nil {
+			return state.Protected, nil
 		}
+		if live := liveController(info); live != nil {
+			return live, nil
+		}
+		return nil, fmt.Errorf("read running config for protected fields: %w", readErr)
 	}
 	if exists && state.Protected != nil {
 		return state.Protected, nil
+	}
+	if infoErr == nil {
+		if live := liveController(info); live != nil {
+			return live, nil
+		}
 	}
 	// A stopped core has no live controller snapshot. Preserve source fields
 	// until the first apply can capture them; an unavailable config file should
@@ -1146,7 +1160,36 @@ func protectedController() (map[string]any, error) {
 	return nil, nil
 }
 
-func compileBytes(source, global, override []byte) ([]byte, error) {
+func liveController(info core.Info) map[string]any {
+	if strings.TrimSpace(info.ControllerTarget) == "" {
+		return nil
+	}
+	switch info.ControllerTransport {
+	case "unix":
+		return map[string]any{"external-controller-unix": info.ControllerTarget}
+	case "tcp":
+		return map[string]any{"external-controller": info.ControllerTarget}
+	default:
+		if strings.HasPrefix(info.ControllerTarget, "/") {
+			return map[string]any{"external-controller-unix": info.ControllerTarget}
+		}
+		return map[string]any{"external-controller": info.ControllerTarget}
+	}
+}
+
+func withLiveController(protected map[string]any, info core.Info) map[string]any {
+	if protected == nil {
+		protected = map[string]any{}
+	}
+	for key, value := range liveController(info) {
+		if _, ok := protected[key]; !ok {
+			protected[key] = value
+		}
+	}
+	return protected
+}
+
+func compileBytes(source, global, override []byte, untrusted bool) ([]byte, error) {
 	settings, err := profile.LoadSettings(st)
 	if err != nil {
 		return nil, err
@@ -1157,7 +1200,7 @@ func compileBytes(source, global, override []byte) ([]byte, error) {
 	}
 	return (config.Compiler{}).Compile(config.CompileInput{
 		Source: source, GlobalOverride: global, ProfileOverride: override,
-		Settings: settings, Protected: protected,
+		Settings: settings, Protected: protected, UntrustedSource: untrusted,
 	})
 }
 
@@ -1194,8 +1237,8 @@ func validateListenerConflicts(b []byte) error {
 	return config.ValidateListenerConflicts(parsed)
 }
 
-func validateCompiled(source, override []byte) error {
-	b, err := compileBytes(source, nil, override)
+func validateCompiled(source, override []byte, untrusted bool) error {
+	b, err := compileBytes(source, nil, override, untrusted)
 	if err != nil {
 		return err
 	}
