@@ -77,8 +77,11 @@ func FixTUNPermission() (RepairResult, error) {
 	if err != nil {
 		return RepairResult{}, err
 	}
-	// Keep this descriptor open across pkexec. A saved dev/inode pair can miss a
-	// delete-and-recreate that reuses the inode number after the old file is closed.
+	// Keep the original inode open until the check below. Remembering only the
+	// device and inode numbers is not enough: once that file is closed, a new
+	// file created at the same path can be given the same inode number.
+	// setcap still updates the path, not this descriptor. A file that receives
+	// the capability and is then renamed away before the check is not covered.
 	opened, err := openExecutable(executable)
 	if err != nil {
 		return RepairResult{}, err

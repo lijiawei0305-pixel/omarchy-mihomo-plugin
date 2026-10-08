@@ -181,6 +181,10 @@ func writeExecutable(t *testing.T, contents string, mode os.FileMode) string {
 	if err := os.WriteFile(path, []byte(contents), mode); err != nil {
 		t.Fatal(err)
 	}
+	// WriteFile applies the process umask. The identity checks need the exact mode.
+	if err := os.Chmod(path, mode); err != nil {
+		t.Fatal(err)
+	}
 	return path
 }
 
