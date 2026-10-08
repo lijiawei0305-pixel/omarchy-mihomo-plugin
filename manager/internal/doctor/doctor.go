@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/lijiawei0305-pixel/omarchy-mihomo-plugin/manager/internal/config"
@@ -78,10 +77,13 @@ func FixTUNPermission() (RepairResult, error) {
 	if err != nil {
 		return RepairResult{}, err
 	}
-	before, err := fileIdentity(executable)
+	// Keep this descriptor open across pkexec. A saved dev/inode pair can miss a
+	// delete-and-recreate that reuses the inode number after the old file is closed.
+	opened, err := openExecutable(executable)
 	if err != nil {
 		return RepairResult{}, err
 	}
+	defer opened.Close()
 	cmd := exec.Command(pkexec, setcap, "cap_net_admin,cap_net_raw=+ep", executable)
 	if output, runErr := cmd.CombinedOutput(); runErr != nil {
 		message := strings.TrimSpace(string(output))
@@ -90,7 +92,7 @@ func FixTUNPermission() (RepairResult, error) {
 		}
 		return RepairResult{}, fmt.Errorf("could not grant TUN capabilities: %s", message)
 	}
-	if err := sameFileIdentity(executable, before); err != nil {
+	if err := sameFileIdentity(executable, opened); err != nil {
 		cleanup, _ := exec.Command(pkexec, setcap, "-r", executable).CombinedOutput()
 		detail := strings.TrimSpace(string(cleanup))
 		if detail != "" {
@@ -136,33 +138,46 @@ func runningExecutable(info core.Info) (string, error) {
 	return path, nil
 }
 
-type fileID struct {
-	dev uint64
-	ino uint64
+func openExecutable(path string) (*os.File, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("cannot inspect Mihomo executable: %w", err)
+	}
+	if err := requireExecutableStat(file); err != nil {
+		file.Close()
+		return nil, err
+	}
+	return file, nil
 }
 
-func fileIdentity(path string) (fileID, error) {
-	info, err := os.Stat(path)
+func sameFileIdentity(path string, opened *os.File) error {
+	held, err := opened.Stat()
 	if err != nil {
-		return fileID{}, fmt.Errorf("cannot inspect Mihomo executable: %w", err)
+		return fmt.Errorf("cannot inspect Mihomo executable: %w", err)
 	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || stat == nil {
-		return fileID{}, fmt.Errorf("cannot identify Mihomo executable")
-	}
-	return fileID{dev: uint64(stat.Dev), ino: stat.Ino}, nil
-}
-
-func sameFileIdentity(path string, before fileID) error {
-	after, err := fileIdentity(path)
+	current, err := os.Stat(path)
 	if err != nil {
+		return fmt.Errorf("cannot inspect Mihomo executable: %w", err)
+	}
+	if err := requireExecutableInfo(current); err != nil {
 		return err
 	}
-	if after != before {
+	if !os.SameFile(held, current) {
 		return fmt.Errorf("executable inode changed")
 	}
-	info, err := os.Stat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&0111 == 0 {
+	return nil
+}
+
+func requireExecutableStat(file *os.File) error {
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("cannot inspect Mihomo executable: %w", err)
+	}
+	return requireExecutableInfo(info)
+}
+
+func requireExecutableInfo(info os.FileInfo) error {
+	if info == nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
 		return fmt.Errorf("Mihomo executable is not a regular executable")
 	}
 	return nil

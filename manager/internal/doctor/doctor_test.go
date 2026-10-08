@@ -114,25 +114,81 @@ func TestFirewallTUNPreflightDefaultsToGVisor(t *testing.T) {
 }
 
 func TestFileIdentityDetectsReplacement(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "mihomo")
-	if err := os.WriteFile(path, []byte("mihomo"), 0o700); err != nil {
+	t.Run("unchanged", func(t *testing.T) {
+		path := writeExecutable(t, "mihomo", 0o700)
+		opened := openTestExecutable(t, path)
+		defer opened.Close()
+		if err := sameFileIdentity(path, opened); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("recreate", func(t *testing.T) {
+		path := writeExecutable(t, "mihomo", 0o700)
+		opened := openTestExecutable(t, path)
+		defer opened.Close()
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("replaced"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := sameFileIdentity(path, opened); err == nil {
+			t.Fatal("expected a deleted and recreated executable to fail the identity check")
+		}
+	})
+
+	t.Run("rename", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "mihomo")
+		if err := os.WriteFile(path, []byte("mihomo"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		opened := openTestExecutable(t, path)
+		defer opened.Close()
+		replacement := filepath.Join(dir, "replacement")
+		if err := os.WriteFile(replacement, []byte("other"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(replacement, path); err != nil {
+			t.Fatal(err)
+		}
+		if err := sameFileIdentity(path, opened); err == nil {
+			t.Fatal("expected an atomic rename replacement to fail the identity check")
+		}
+	})
+
+	t.Run("nonexecutable", func(t *testing.T) {
+		path := writeExecutable(t, "data", 0o600)
+		if _, err := openExecutable(path); err == nil {
+			t.Fatal("expected a non-executable file to be rejected")
+		}
+		executable := writeExecutable(t, "mihomo", 0o700)
+		opened := openTestExecutable(t, executable)
+		defer opened.Close()
+		if err := os.Chmod(executable, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := sameFileIdentity(executable, opened); err == nil {
+			t.Fatal("expected a file that lost its execute bit to be rejected")
+		}
+	})
+}
+
+func writeExecutable(t *testing.T, contents string, mode os.FileMode) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "mihomo")
+	if err := os.WriteFile(path, []byte(contents), mode); err != nil {
 		t.Fatal(err)
 	}
-	before, err := fileIdentity(path)
+	return path
+}
+
+func openTestExecutable(t *testing.T, path string) *os.File {
+	t.Helper()
+	opened, err := openExecutable(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := sameFileIdentity(path, before); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte("replaced"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := sameFileIdentity(path, before); err == nil {
-		t.Fatal("expected a replaced executable to fail the identity check")
-	}
+	return opened
 }
