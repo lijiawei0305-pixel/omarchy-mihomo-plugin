@@ -200,7 +200,7 @@ Item {
     visible: root.rows.length === 0
     text: root.svc && root.svc.rulesLoading ? root.svc.t("loadingRules")
       : root.svc && !root.svc.connected ? root.svc.t("notConnected")
-      : root.filter !== "" ? root.svc.t("noMatchRules")
+      : root.filter !== "" ? (root.svc ? root.svc.t("noMatchRules") : "")
       : (root.svc ? root.svc.t("noRules") : "")
     textFormat: Text.PlainText
     color: Util.alpha(root.fg, 0.45)

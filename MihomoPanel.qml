@@ -16,7 +16,9 @@ Panel {
   ipcTarget: "io.github.lijiawei0305-pixel.mihomo"
   manageIpc: false
 
-  readonly property var svc: bar?.shell?.serviceFor(root.moduleName)
+  readonly property var svc: ServiceStore.instance
+    ? ServiceStore.instance
+    : (bar && bar.shell && typeof bar.shell.serviceFor === "function" ? bar.shell.serviceFor(root.moduleName) : null)
 
   readonly property color fg: bar ? bar.foreground : Color.popups.text
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family

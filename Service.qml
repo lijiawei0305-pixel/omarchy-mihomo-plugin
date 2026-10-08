@@ -23,13 +23,14 @@ Item {
   property var shell: null
   property var manifest: null
 
-  readonly property bool ready: manifest !== null
-    && manifest.__sourceDir !== undefined
-    && String(manifest.__sourceDir) !== ""
-  readonly property string pluginDir: ready
-    ? String(manifest.__sourceDir)
-    : Quickshell.env("HOME") + "/.config/omarchy/plugins/io.github.lijiawei0305-pixel.mihomo"
+  readonly property string pluginDir: {
+    if (manifest && manifest.__sourceDir) return String(manifest.__sourceDir)
+    var url = String(Qt.resolvedUrl("."))
+    if (url.indexOf("file://") === 0) return url.substring(7).replace(/\/$/, "")
+    return (Quickshell.env("HOME") || "") + "/.config/omarchy/plugins/io.github.lijiawei0305-pixel.mihomo"
+  }
   readonly property string runner: pluginDir + "/bin/mihomo-ctl"
+  readonly property bool ready: runner !== ""
 
   // Set by the panel. Drives poll cadence and the streaming subscriptions.
   property bool active: false
@@ -766,6 +767,15 @@ Item {
   }
 
   // --- lifecycle -----------------------------------------------------------
+
+  Component.onCompleted: {
+    ServiceStore.instance = root
+    if (ready) {
+      endpointProc.running = true
+      langProc.running = true
+      refresh(true)
+    }
+  }
 
   onReadyChanged: {
     if (!ready) return
