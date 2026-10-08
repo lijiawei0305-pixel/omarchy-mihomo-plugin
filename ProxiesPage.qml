@@ -199,8 +199,9 @@ Item {
           foreground: root.fg
           hoverColor: Color.accent
           fontFamily: root.fontFamily
-          enabled: !root.svc.isTesting(card.groupName)
-          onClicked: root.svc.testGroup(card.groupName)
+          // Shell reload destroys the service while this card is still on screen.
+          enabled: root.svc ? !root.svc.isTesting(card.groupName) : false
+          onClicked: if (root.svc) root.svc.testGroup(card.groupName)
         }
 
         PanelActionButton {
@@ -286,6 +287,7 @@ Item {
       cursorShape: nodeRow.selectable ? Qt.PointingHandCursor : Qt.ArrowCursor
       acceptedButtons: Qt.LeftButton | Qt.RightButton
       onClicked: function(mouse) {
+        if (!root.svc) return
         if (mouse.button === Qt.RightButton) {
           root.svc.testNode(nodeRow.nodeName)
           return
