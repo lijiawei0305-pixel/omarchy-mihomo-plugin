@@ -154,6 +154,8 @@ Subscription fetching is deliberately constrained:
 * every redirect destination is checked and redirect count is bounded;
 * shared, documentation, benchmarking, and transition addresses that embed a blocked IPv4 address are rejected, along with the metadata hostname;
 * the test-only loopback switch does not permit LAN or link-local destinations;
+* an update through the local mixed-port connects to the address that passed
+  the check, so the proxy does not resolve the subscription name again;
 * requests have a 30-second timeout and a 16 MiB response limit;
 * ETag/conditional requests may avoid downloading an unchanged subscription;
 * errors redact subscription URLs and their tokens before returning or logging
@@ -178,7 +180,9 @@ requests only:
 pkexec setcap cap_net_admin,cap_net_raw=+ep <mihomo-binary>
 ```
 
-The command is followed by `getcap` verification. A service restart is allowed
+The command is followed by `getcap` verification. The executable's identity is
+checked again after `setcap`; if the file was replaced during the prompt, the
+new capabilities are removed. A service restart is allowed
 only after confirming that the service is plugin-managed. Setup never invokes
 a root shell and never changes an externally managed core.
 

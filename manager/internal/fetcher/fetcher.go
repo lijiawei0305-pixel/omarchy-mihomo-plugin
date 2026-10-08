@@ -2,6 +2,7 @@ package fetcher
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
@@ -283,17 +284,11 @@ func Fetch(rawURL, ua, etag, lastModified string, viaProxy bool, proxyPort int) 
 	if err = validateResolvedHost(hostContext, u.Hostname()); err != nil {
 		return Result{}, err
 	}
-	tr := &http.Transport{}
-	proxyAddress := ""
 	if viaProxy {
-		if proxyPort <= 0 {
-			return Result{}, fmt.Errorf("mihomo mixed-port is unavailable for proxy update")
-		}
-		p, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", proxyPort))
-		tr.Proxy = http.ProxyURL(p)
-		proxyAddress = p.Host
+		return fetchViaProxy(u, ua, etag, lastModified, proxyPort)
 	}
-	tr.DialContext = safeDialContext(proxyAddress)
+	tr := &http.Transport{}
+	tr.DialContext = safeDialContext("")
 	client := &http.Client{Timeout: 30 * time.Second, Transport: tr, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 5 {
 			return fmt.Errorf("too many redirects")
@@ -330,6 +325,134 @@ func Fetch(rawURL, ua, etag, lastModified string, viaProxy bool, proxyPort int) 
 	}
 	r := io.LimitReader(resp.Body, MaxResponse+1)
 	body, err := io.ReadAll(r)
+	if err != nil {
+		return Result{}, err
+	}
+	if len(body) > MaxResponse {
+		return Result{}, fmt.Errorf("subscription exceeds 16 MiB")
+	}
+	return Result{Body: body, ETag: resp.Header.Get("ETag"), LastModified: resp.Header.Get("Last-Modified"), SubscriptionInfo: usage, HasSubscriptionInfo: hasUsage}, nil
+}
+
+// fetchViaProxy asks the local Mihomo mixed-port to connect to an address this
+// process already accepted. The proxy must not resolve the name again: a
+// rebinding answer could otherwise point the download at a private target.
+func fetchViaProxy(original *url.URL, ua, etag, lastModified string, proxyPort int) (Result, error) {
+	if original == nil {
+		return Result{}, fmt.Errorf("subscription URL must be HTTP or HTTPS")
+	}
+	if proxyPort <= 0 || proxyPort > 65535 {
+		return Result{}, fmt.Errorf("mihomo mixed-port is unavailable for proxy update")
+	}
+	proxyURL := &url.URL{Scheme: "http", Host: net.JoinHostPort("127.0.0.1", strconv.Itoa(proxyPort))}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	current := *original
+	for hop := 0; hop < 5; hop++ {
+		if hop > 0 {
+			if err := validateRedirectURLContext(ctx, &current); err != nil {
+				return Result{}, err
+			}
+		}
+		pinned, serverName, err := pinPublicURL(ctx, &current)
+		if err != nil {
+			return Result{}, err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, pinned.String(), nil)
+		if err != nil {
+			return Result{}, fmt.Errorf("invalid subscription request")
+		}
+		if current.Port() == "" {
+			req.Host = current.Hostname()
+		} else {
+			req.Host = current.Host
+		}
+		if ua != "" {
+			req.Header.Set("User-Agent", ua)
+		}
+		if hop == 0 && etag != "" {
+			req.Header.Set("If-None-Match", etag)
+		}
+		if hop == 0 && lastModified != "" {
+			req.Header.Set("If-Modified-Since", lastModified)
+		}
+		transport := &http.Transport{
+			Proxy:           http.ProxyURL(proxyURL),
+			DialContext:     safeDialContext(proxyURL.Host),
+			TLSClientConfig: &tls.Config{ServerName: serverName},
+		}
+		client := &http.Client{Timeout: 30 * time.Second, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		}}
+		resp, err := client.Do(req)
+		if err != nil {
+			return Result{}, fmt.Errorf("subscription request failed: %w", redactError(err))
+		}
+		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+			location, locErr := resp.Location()
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+			resp.Body.Close()
+			if locErr != nil || location == nil {
+				return Result{}, fmt.Errorf("subscription redirect must be HTTP or HTTPS")
+			}
+			next, parseErr := validateHTTPURL(location.String(), true)
+			if parseErr != nil {
+				return Result{}, parseErr
+			}
+			current = *next
+			if hop == 4 {
+				return Result{}, fmt.Errorf("too many redirects")
+			}
+			continue
+		}
+		result, err := readFetchBody(resp)
+		resp.Body.Close()
+		return result, err
+	}
+	return Result{}, fmt.Errorf("too many redirects")
+}
+
+func pinPublicURL(ctx context.Context, u *url.URL) (*url.URL, string, error) {
+	if u == nil {
+		return nil, "", fmt.Errorf("subscription URL must be HTTP or HTTPS")
+	}
+	host := u.Hostname()
+	port := u.Port()
+	if port == "" {
+		if u.Scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	dialHost := host
+	if !(allowPrivateHosts && isLoopbackHost(host)) {
+		ips, err := resolvePublicIPs(ctx, host)
+		if err != nil {
+			return nil, "", err
+		}
+		if len(ips) == 0 {
+			return nil, "", fmt.Errorf("subscription URL host has no address")
+		}
+		dialHost = ips[0].String()
+	}
+	pinned := *u
+	pinned.Host = net.JoinHostPort(dialHost, port)
+	return &pinned, host, nil
+}
+
+func readFetchBody(resp *http.Response) (Result, error) {
+	if resp == nil {
+		return Result{}, fmt.Errorf("subscription request failed")
+	}
+	usage, hasUsage := parseSubscriptionInfo(resp.Header.Get("subscription-userinfo"))
+	if resp.StatusCode == http.StatusNotModified {
+		return Result{NotModified: true, ETag: resp.Header.Get("ETag"), LastModified: resp.Header.Get("Last-Modified"), SubscriptionInfo: usage, HasSubscriptionInfo: hasUsage}, nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return Result{}, fmt.Errorf("subscription returned HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxResponse+1))
 	if err != nil {
 		return Result{}, err
 	}

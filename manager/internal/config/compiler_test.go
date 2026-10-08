@@ -604,6 +604,25 @@ listeners:
 	}
 }
 
+func TestManagedTUNRejectsAutoRedirectFromSourceAndOverride(t *testing.T) {
+	out, err := (Compiler{Settings: profile.DefaultSettings()}).Compile(CompileInput{
+		Source:          []byte("mode: rule\ntun:\n  auto-redirect: true\n"),
+		ProfileOverride: []byte("tun:\n  auto-redirect: true\n"),
+		UntrustedSource: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := Parse(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tun, ok := compiled["tun"].(map[string]any)
+	if !ok || tun["auto-redirect"] != false {
+		t.Fatalf("managed auto-redirect = %#v", compiled["tun"])
+	}
+}
+
 func TestUntrustedSourceStillHonorsUserAllowLANOverride(t *testing.T) {
 	out, err := (Compiler{Settings: profile.DefaultSettings()}).Compile(CompileInput{
 		Source:          []byte("allow-lan: true\nmode: rule\n"),

@@ -2,6 +2,8 @@ package doctor
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -108,5 +110,29 @@ func TestFirewallTUNPreflightDefaultsToGVisor(t *testing.T) {
 	}
 	if report.Checks[0].ID != "firewallTunCompatibility" || report.Checks[0].Status != "ok" || report.Checks[0].Message != "gvisor" {
 		t.Fatalf("preflight check = %#v", report.Checks[0])
+	}
+}
+
+func TestFileIdentityDetectsReplacement(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mihomo")
+	if err := os.WriteFile(path, []byte("mihomo"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	before, err := fileIdentity(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sameFileIdentity(path, before); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("replaced"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := sameFileIdentity(path, before); err == nil {
+		t.Fatal("expected a replaced executable to fail the identity check")
 	}
 }

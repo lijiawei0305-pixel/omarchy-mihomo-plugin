@@ -1440,6 +1440,12 @@ Item {
     if (ready) startReadyWork()
   }
 
+  Component.onDestruction: {
+    // A replacement service may already have published itself. Only the
+    // instance that is still current may clear the bridge.
+    if (ServiceStore.instance === root) ServiceStore.instance = null
+  }
+
   onConnectedChanged: {
     if (!connected) {
       if (setupState === "ready") {

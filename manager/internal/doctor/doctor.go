@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/lijiawei0305-pixel/omarchy-mihomo-plugin/manager/internal/config"
@@ -77,6 +78,10 @@ func FixTUNPermission() (RepairResult, error) {
 	if err != nil {
 		return RepairResult{}, err
 	}
+	before, err := fileIdentity(executable)
+	if err != nil {
+		return RepairResult{}, err
+	}
 	cmd := exec.Command(pkexec, setcap, "cap_net_admin,cap_net_raw=+ep", executable)
 	if output, runErr := cmd.CombinedOutput(); runErr != nil {
 		message := strings.TrimSpace(string(output))
@@ -84,6 +89,14 @@ func FixTUNPermission() (RepairResult, error) {
 			message = runErr.Error()
 		}
 		return RepairResult{}, fmt.Errorf("could not grant TUN capabilities: %s", message)
+	}
+	if err := sameFileIdentity(executable, before); err != nil {
+		cleanup, _ := exec.Command(pkexec, setcap, "-r", executable).CombinedOutput()
+		detail := strings.TrimSpace(string(cleanup))
+		if detail != "" {
+			return RepairResult{}, fmt.Errorf("Mihomo executable changed while granting TUN capabilities: %w (%s)", err, detail)
+		}
+		return RepairResult{}, fmt.Errorf("Mihomo executable changed while granting TUN capabilities: %w", err)
 	}
 	if err := verifyCapabilities(executable); err != nil {
 		return RepairResult{}, err
@@ -121,6 +134,38 @@ func runningExecutable(info core.Info) (string, error) {
 		return "", fmt.Errorf("Mihomo executable is not a regular executable: %s", path)
 	}
 	return path, nil
+}
+
+type fileID struct {
+	dev uint64
+	ino uint64
+}
+
+func fileIdentity(path string) (fileID, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fileID{}, fmt.Errorf("cannot inspect Mihomo executable: %w", err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat == nil {
+		return fileID{}, fmt.Errorf("cannot identify Mihomo executable")
+	}
+	return fileID{dev: uint64(stat.Dev), ino: stat.Ino}, nil
+}
+
+func sameFileIdentity(path string, before fileID) error {
+	after, err := fileIdentity(path)
+	if err != nil {
+		return err
+	}
+	if after != before {
+		return fmt.Errorf("executable inode changed")
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&0111 == 0 {
+		return fmt.Errorf("Mihomo executable is not a regular executable")
+	}
+	return nil
 }
 
 func privilegedTool(name string) (string, error) {

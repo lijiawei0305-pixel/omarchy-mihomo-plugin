@@ -10,6 +10,8 @@ echo "==> source contract"
 rg -q 'singleton ServiceStore 1\.0 ServiceStore\.qml' "$ROOT/qmldir" || fail "qmldir does not register ServiceStore"
 rg -q 'pragma Singleton' "$ROOT/ServiceStore.qml" || fail "ServiceStore is not a singleton"
 rg -q 'ServiceStore\.instance = root' "$ROOT/Service.qml" || fail "Service does not publish itself"
+rg -q 'if \(ServiceStore\.instance === root\) ServiceStore\.instance = null' "$ROOT/Service.qml" \
+  || fail "Service destruction can clear a replacement instance"
 rg -q 'if \(!ready \|\| readyWorkStarted\) return' "$ROOT/Service.qml" \
   || fail "startReadyWork can run twice on the initial ready=true"
 rg -q 'Qt\.resolvedUrl\("\."\)' "$ROOT/Service.qml" || fail "pluginDir does not use Qt.resolvedUrl"
@@ -144,6 +146,9 @@ Item {
         siblingOk = sib.marker === "sibling-ok"
         ServiceStore.instance = root
         storeOk = ServiceStore.instance === root
+    }
+    Component.onDestruction: {
+        if (ServiceStore.instance === root) ServiceStore.instance = null
     }
 }
 EOF

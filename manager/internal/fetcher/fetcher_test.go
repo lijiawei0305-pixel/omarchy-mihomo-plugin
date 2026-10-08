@@ -5,6 +5,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -200,5 +203,47 @@ func TestDialRechecksDNSRebinding(t *testing.T) {
 	}
 	if containsSecret(err.Error()) {
 		t.Fatalf("token leaked: %v", err)
+	}
+}
+
+func TestViaProxyConnectsToPinnedAddress(t *testing.T) {
+	oldAllow := allowPrivateHosts
+	oldLookup := lookupIP
+	allowPrivateHosts = false
+	lookupIP = func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("1.1.1.1")}}, nil
+	}
+	defer func() {
+		allowPrivateHosts = oldAllow
+		lookupIP = oldLookup
+	}()
+
+	var seen string
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodConnect {
+			seen = r.Host
+		} else if r.URL != nil {
+			seen = r.URL.Host
+		}
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer proxy.Close()
+	proxyURL, err := url.Parse(proxy.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(proxyURL.Port())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Fetch("https://subscription.example.test/sub?token=secret", "", "", "", true, port)
+	if err == nil {
+		t.Fatal("expected the pinned proxy request to fail closed")
+	}
+	if containsSecret(err.Error()) {
+		t.Fatalf("token leaked: %v", err)
+	}
+	if !strings.Contains(seen, "1.1.1.1") || strings.Contains(seen, "subscription.example.test") {
+		t.Fatalf("proxy target = %q, want the checked address", seen)
 	}
 }
